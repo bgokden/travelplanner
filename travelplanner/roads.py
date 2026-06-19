@@ -194,14 +194,18 @@ def _expanded_router_cached(region: str, data_dir: str | None):
     from travelplanner.graph.road.turns import TurnCosts, build_expanded_graph
 
     if data_dir is not None:
-        # offline artifact (signals/restrictions persisted in a later stage)
-        base = _road_router_cached(region, data_dir).graph
-    else:
-        # turn-aware needs signal + turn-restriction data, so load it explicitly
-        from travelplanner.graph.road.osm import load_road_graph
-        base = load_road_graph(download_region(region), store_names=False,
-                               turn_data=True)
-    # geometric turn costs (left/right/straight/sharp/U-turn) + signal surcharge
+        # offline artifact: base graph carries signals + restrictions (v3), and
+        # the expanded contraction order is loaded so the CCH builds instantly.
+        from travelplanner.graph.road.store import (load_expanded_order,
+                                                    load_road_artifact)
+        base, _ = load_road_artifact(data_dir)
+        expanded = build_expanded_graph(base, turn_costs=TurnCosts())
+        return ExpandedCCHRoadRouter(expanded, order=load_expanded_order(data_dir))
+
+    # online: turn-aware needs signal + turn-restriction data, so load it
+    from travelplanner.graph.road.osm import load_road_graph
+    base = load_road_graph(download_region(region), store_names=False,
+                           turn_data=True)
     expanded = build_expanded_graph(base, turn_costs=TurnCosts())
     return ExpandedCCHRoadRouter(expanded)
 
@@ -213,7 +217,7 @@ def _router_for(region, data_dir, turn_aware):
     return road_router(region, data_dir)
 
 
-def build_region(region: str, out_dir: str) -> str:
+def build_region(region: str, out_dir: str, *, turn_aware: bool = False) -> str:
     """Build an offline road artifact for `region` into `out_dir`; return it.
 
     Run this at build time, where the network is available: it downloads the OSM
@@ -221,14 +225,27 @@ def build_region(region: str, out_dir: str) -> str:
     slow, machine-independent steps), then writes everything to out_dir. At
     runtime, pass data_dir=out_dir to road_router/drive/region_connector to load
     it with no network and no re-parsing.
+
+    turn_aware=True additionally parses signals + turn restrictions and computes
+    the turn-expanded contraction order, so drive(..., turn_aware=True,
+    data_dir=out_dir) loads instantly offline instead of re-parsing and
+    re-expanding (the slow, ~minutes step).
     """
     from travelplanner.graph.road import CCHRoadRouter
     from travelplanner.graph.road.osm import load_road_graph
     from travelplanner.graph.road.store import save_road_artifact
 
-    graph = load_road_graph(download_region(region), store_names=False)
+    graph = load_road_graph(download_region(region), store_names=False,
+                            turn_data=turn_aware)
     router = CCHRoadRouter(graph)  # computes the contraction order
-    return save_road_artifact(graph, router.order, out_dir)
+    save_road_artifact(graph, router.order, out_dir)
+    if turn_aware:
+        from travelplanner.graph.road.expanded import ExpandedCCHRoadRouter
+        from travelplanner.graph.road.store import save_expanded_order
+        from travelplanner.graph.road.turns import TurnCosts, build_expanded_graph
+        expanded = build_expanded_graph(graph, turn_costs=TurnCosts())
+        save_expanded_order(ExpandedCCHRoadRouter(expanded).order, out_dir)
+    return out_dir
 
 
 def region_connector(region: str, stops, *, data_dir: str | None = None, **kwargs):

@@ -23,13 +23,16 @@ from datetime import date
 from travelplanner.graph.road.model import RoadGraph
 from travelplanner.graph.validity import ServiceCalendar, Validity
 
-FORMAT_VERSION = 2
+FORMAT_VERSION = 3
 _META = "meta.json"
 _NODE_KEYS_TXT = "node_keys.txt"
 _NODE_KEYS_BIN = "node_keys.bin"
 _ORDER = "order.bin"
 _ARC_NAME = "arc_name.bin"
 _ARC_CLASS = "arc_class.bin"
+_SIGNALS = "signals.bin"
+_RESTRICTED = "restricted_turns.bin"
+_EXP_ORDER = "expanded_order.bin"
 
 
 def _calendar_to_json(cal: ServiceCalendar | None):
@@ -110,6 +113,8 @@ def save_road_artifact(graph: RoadGraph, order, out_dir: str) -> str:
         "validity_table": [_validity_to_json(v) for v in graph.validity_table],
         "name_table": list(graph.name_table),
         "class_table": list(graph.class_table),
+        "signal_count": len(graph.signal_nodes),
+        "restriction_count": len(graph.restricted_turns),
     }
     with open(os.path.join(out_dir, _META), "w") as f:
         json.dump(meta, f)
@@ -136,8 +141,35 @@ def save_road_artifact(graph: RoadGraph, order, out_dir: str) -> str:
         _write_array(os.path.join(out_dir, _ARC_NAME), "i", graph.arc_name)
     if has_class:
         _write_array(os.path.join(out_dir, _ARC_CLASS), "i", graph.arc_class)
+    if graph.signal_nodes:
+        _write_array(os.path.join(out_dir, _SIGNALS), "i",
+                     sorted(graph.signal_nodes))
+    if graph.restricted_turns:
+        flat = array("i")
+        for a, b in sorted(graph.restricted_turns):
+            flat.append(a)
+            flat.append(b)
+        _write_array(os.path.join(out_dir, _RESTRICTED), "i", flat)
     _write_array(os.path.join(out_dir, _ORDER), "i", order)
     return out_dir
+
+
+def save_expanded_order(order, out_dir: str) -> str:
+    """Persist the turn-expanded CCH contraction order beside a base artifact."""
+    os.makedirs(out_dir, exist_ok=True)
+    _write_array(os.path.join(out_dir, _EXP_ORDER), "i", order)
+    return out_dir
+
+
+def load_expanded_order(out_dir: str) -> list[int] | None:
+    """Load the turn-expanded order, or None if this artifact has none."""
+    path = os.path.join(out_dir, _EXP_ORDER)
+    if not os.path.exists(path):
+        return None
+    col = array("i")
+    with open(path, "rb") as f:
+        col.frombytes(f.read())
+    return list(col)
 
 
 def load_road_artifact(out_dir: str) -> tuple[RoadGraph, list[int]]:
@@ -177,6 +209,20 @@ def load_road_artifact(out_dir: str) -> tuple[RoadGraph, list[int]]:
                 if meta["has_names"] else None)
     arc_class = (_read_array(os.path.join(out_dir, _ARC_CLASS), "i", arc_count)
                  if meta.get("has_class") else None)
+
+    signal_count = meta.get("signal_count", 0)
+    signal_nodes = (frozenset(_read_array(os.path.join(out_dir, _SIGNALS), "i",
+                                          signal_count))
+                    if signal_count else frozenset())
+    restriction_count = meta.get("restriction_count", 0)
+    if restriction_count:
+        flat = _read_array(os.path.join(out_dir, _RESTRICTED), "i",
+                           restriction_count * 2)
+        restricted_turns = frozenset((flat[2 * i], flat[2 * i + 1])
+                                     for i in range(restriction_count))
+    else:
+        restricted_turns = frozenset()
+
     order = list(_read_array(os.path.join(out_dir, _ORDER), "i", node_count))
 
     graph = RoadGraph(
@@ -192,5 +238,7 @@ def load_road_artifact(out_dir: str) -> tuple[RoadGraph, list[int]]:
         name_table=tuple(meta["name_table"]),
         arc_class=arc_class,
         class_table=tuple(meta.get("class_table", ())),
+        signal_nodes=signal_nodes,
+        restricted_turns=restricted_turns,
     )
     return graph, order

@@ -16,7 +16,10 @@ All notable changes to this project are documented here. The format is based on
   `highway=traffic_signals` nodes. Validated urban (Amsterdam centre +38%, in
   Google's range; restrictions reroute Zaandam->Schiphol to a legal path). The
   node-based engine remains the default; turn-aware is opt-in and heavier (it
-  parses signal + restriction data, so its OSM load is slower).
+  parses signal + restriction data, so its OSM load is slower). Offline:
+  `build_region(region, out_dir, turn_aware=True)` persists signals, restrictions
+  and the turn-expanded contraction order (artifact format v3), so
+  `drive(..., turn_aware=True, data_dir=...)` loads with no network or re-expand.
 - Offline road artifacts (`build_region`, `travelplanner build`): parse the OSM
   extract and compute the CCH contraction order at build time, write them to an
   explicit directory, and load them at runtime with no network and no re-parsing
