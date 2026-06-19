@@ -99,9 +99,18 @@ def resolve_region(region: str) -> str:
     key = region.strip().lower()
     if key in REGIONS:
         return REGIONS[key]
+    # Fall back to the full Geofabrik catalog if its index is already cached
+    # locally (no network here -- run list_regions()/geofabrik.catalog() once to
+    # populate it). This widens coverage from the curated REGIONS to all ~555
+    # extracts without forcing a download on every unknown name.
+    from travelplanner.geofabrik import cached_catalog
+    entry = cached_catalog().get(key)
+    if entry is not None:
+        return entry.pbf_url
     raise ValueError(
         f"Unknown region {region!r}. Use a known name "
-        f"({', '.join(sorted(REGIONS))}), a Geofabrik URL, or a local .osm.pbf path.")
+        f"({', '.join(sorted(REGIONS))}), any Geofabrik catalog id "
+        f"(see list_regions()), a Geofabrik URL, or a local .osm.pbf path.")
 
 
 def download_region(region: str) -> str:
