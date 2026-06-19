@@ -22,6 +22,14 @@ network at runtime:
 build_region writes the parsed road graph and the CCH contraction order (the
 slow, machine-independent steps) to out_dir; data_dir loads them back, skipping
 the download, the OSM parse, and the order computation.
+
+Concurrency: a router and its customized roads wrap native (Rust) routing
+objects that are thread-affine -- do not share one across threads (it raises a
+low-level panic, not a clean Python exception). For parallel batch work use
+separate processes (each loads the same on-disk artifact cheaply), or use
+drive_matrix on one thread, which reuses a single customized metric. Within a
+process, road_router caches one router per region and customized() caches the
+metric per (day, conditions), so sequential calls are fast.
 """
 
 import os
@@ -240,6 +248,17 @@ def _path_distance_km(graph, node_indices) -> float:
     return total
 
 
+def _drive_between(road, graph, from_idx: int, to_idx: int) -> DriveResult:
+    if from_idx == to_idx:
+        return DriveResult(drivable=True, duration=timedelta(0), distance_km=0.0)
+    path = road.route_index(from_idx, to_idx)
+    if path is None:
+        return DriveResult(drivable=False)
+    return DriveResult(drivable=True,
+                       duration=timedelta(seconds=path.seconds),
+                       distance_km=round(_path_distance_km(graph, path.node_indices), 1))
+
+
 def drive(origin, dest, region: str, *, day: date | None = None,
           conditions: frozenset = frozenset(),
           data_dir: str | None = None) -> DriveResult:
@@ -248,14 +267,30 @@ def drive(origin, dest, region: str, *, day: date | None = None,
     With data_dir, route over a prebuilt offline artifact (see build_region)
     rather than downloading and building the region.
     """
-    o = _coerce(origin)
-    d = _coerce(dest)
+    router = road_router(region, data_dir)
+    road = router.customized(day or date.today(), conditions)
+    return _drive_between(road, router.graph,
+                          _snap(router, _coerce(origin), region),
+                          _snap(router, _coerce(dest), region))
+
+
+def drive_matrix(points, region: str, *, dests=None, day: date | None = None,
+                 conditions: frozenset = frozenset(),
+                 data_dir: str | None = None) -> list[list[DriveResult]]:
+    """Driving results for every origin x destination pair.
+
+    Reuses one customized road metric and snaps each point once, so it is far
+    cheaper than calling drive() per pair. Returns a list of rows (one per
+    origin); each entry is a DriveResult (drivable=False when no road connects,
+    duration/distance 0 on the diagonal). With dests=None the square
+    points x points matrix is computed; otherwise points are origins and dests
+    the destinations. Results are direction-dependent (not symmetric).
+    """
     router = road_router(region, data_dir)
     g = router.graph
     road = router.customized(day or date.today(), conditions)
-    path = road.route_index(_snap(router, o, region), _snap(router, d, region))
-    if path is None:
-        return DriveResult(drivable=False)
-    return DriveResult(drivable=True,
-                       duration=timedelta(seconds=path.seconds),
-                       distance_km=round(_path_distance_km(g, path.node_indices), 1))
+    origin_idx = [_snap(router, _coerce(p), region) for p in points]
+    dest_idx = (origin_idx if dests is None
+                else [_snap(router, _coerce(p), region) for p in dests])
+    return [[_drive_between(road, g, oi, di) for di in dest_idx]
+            for oi in origin_idx]
