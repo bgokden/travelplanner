@@ -46,6 +46,7 @@ from travelplanner.roads import (
     region_connector,
     road_router,
 )
+from travelplanner.geofabrik import Region, catalog, list_regions
 
 __all__ = [
     "plan",
@@ -82,6 +83,10 @@ __all__ = [
     "download_region",
     "prefetch",
     "REGIONS",
+    # region catalog (Geofabrik)
+    "list_regions",
+    "catalog",
+    "Region",
 ]
 
 __version__ = "0.1.0"

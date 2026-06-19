@@ -124,6 +124,21 @@ def _cmd_build(args) -> int:
     return 0
 
 
+def _cmd_regions(args) -> int:
+    from travelplanner.geofabrik import list_regions
+
+    regions = list_regions()
+    if args.filter:
+        needle = args.filter.lower()
+        regions = [r for r in regions
+                   if needle in r.id.lower() or needle in r.name.lower()]
+    for r in regions:
+        parent = f" (in {r.parent})" if r.parent else ""
+        print(f"{r.id}\t{r.name}{parent}")
+    print(f"\n{len(regions)} regions")
+    return 0
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         prog="travelplanner",
@@ -162,6 +177,10 @@ def main(argv=None) -> int:
     bd.add_argument("--out-dir", required=True,
                     help="directory to write the offline artifact into")
 
+    rg = sub.add_parser("regions",
+                        help="list downloadable Geofabrik regions")
+    rg.add_argument("--filter", help="only show regions matching this substring")
+
     args = parser.parse_args(argv)
     if args.command == "demo":
         return _cmd_demo(args)
@@ -173,6 +192,8 @@ def main(argv=None) -> int:
         return _cmd_prefetch(args)
     if args.command == "build":
         return _cmd_build(args)
+    if args.command == "regions":
+        return _cmd_regions(args)
     parser.error("unknown command")
     return 2
 
