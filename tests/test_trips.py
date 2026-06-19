@@ -7,7 +7,7 @@ import pytest
 from travelplanner.models import Itinerary, LocationType, Mode
 from travelplanner.graph.coupling import GeometricConnector, SplitConnector
 from travelplanner.graph.query import Objective
-from travelplanner.graph.scheduled.model import Stop
+from travelplanner.graph.scheduled.model import Stop, Timetable, make_trip
 from travelplanner.samples import sample_timetable, sample_trip
 from travelplanner.trips import plan_trip
 from travelplanner import place
@@ -165,6 +165,65 @@ def test_plan_trip_turn_aware_requires_road():
     tt = sample_timetable()
     with pytest.raises(ValueError):
         plan_trip(origin, dest, depart, tt, turn_aware=True)   # road=False
+
+
+def _airport_train_timetable():
+    """Local train Amsterdam Centraal -> Schiphol, then a flight onward, so the
+    access to the airport can itself be transit."""
+    from travelplanner.graph.schema import NodeType
+    tt = Timetable()
+    tt.add_stop(Stop("ASD_CS", "Amsterdam Centraal", 52.3791, 4.9003,
+                     NodeType.RAIL_STATION))
+    tt.add_stop(Stop("SPL", "Schiphol", 52.3105, 4.7683, NodeType.AIRPORT))
+    tt.add_stop(Stop("VAD", "Vaduz Airfield", 47.140, 9.510, NodeType.AIRPORT))
+    tt.add_trip(make_trip("IC", Mode.TRAIN,
+                          [("ASD_CS", "09:00", "09:00"), ("SPL", "09:16", "09:16")]))
+    tt.add_trip(make_trip("FL", Mode.FLIGHT,
+                          [("SPL", "10:00", "10:00"), ("VAD", "11:30", "11:30")]))
+    return tt
+
+
+def test_plan_trip_transit_access_takes_the_train():
+    """access='transit' walks to the nearest station and takes the train to the
+    airport (line-haul) instead of driving -- no car leg."""
+    tt = _airport_train_timetable()
+    origin = place("Amsterdam centre", LocationType.HOTEL, 52.3702, 4.8952)  # ~1km from Centraal
+    dest = place("Vaduz", LocationType.HOTEL, 47.1410, 9.5215)               # ~1km from VAD
+    depart = datetime(2026, 6, 17, 7, 30)
+
+    res = plan_trip(origin, dest, depart, tt, access="transit")
+    assert res
+    best = res[0]
+    modes = [leg.mode for leg in best.legs]
+    assert Mode.CAR not in modes                 # no driving
+    assert modes[0] is Mode.WALK                 # walk to the station
+    assert Mode.TRAIN in modes and Mode.FLIGHT in modes
+
+
+def test_plan_trip_car_access_default_drives_to_airport():
+    """The default (access='car') drives straight to the airport, so the train
+    option is dominated and absent -- the contrast that motivates 'transit'."""
+    tt = _airport_train_timetable()
+    origin = place("Amsterdam centre", LocationType.HOTEL, 52.3702, 4.8952)
+    dest = place("Vaduz", LocationType.HOTEL, 47.1410, 9.5215)
+    depart = datetime(2026, 6, 17, 7, 30)
+
+    best = plan_trip(origin, dest, depart, tt)[0]
+    assert best.legs[0].mode is Mode.CAR
+    assert Mode.TRAIN not in [leg.mode for leg in best.legs]
+
+
+def test_plan_trip_access_invalid_raises():
+    origin, dest, depart = sample_trip()
+    with pytest.raises(ValueError):
+        plan_trip(origin, dest, depart, sample_timetable(), access="bike")
+
+
+def test_plan_trip_transit_access_with_road_raises():
+    origin, dest, depart = sample_trip()
+    with pytest.raises(ValueError):
+        plan_trip(origin, dest, depart, sample_timetable(),
+                  access="transit", road=True)
 
 
 def _turn_graph():

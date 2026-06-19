@@ -34,6 +34,11 @@ from travelplanner.roads import _auto_region, _coerce, region_connector
 ROAD_ACCESS_KM = 60.0
 _ACCESS_MARGIN_KM = 5.0
 
+# Transit access: walk to a stop within this radius and let the scheduled network
+# cover longer hops (e.g. the local train to the airport). Beyond it, a stop is
+# not an access point -- you reach it as a line-haul leg, not on foot.
+WALK_ACCESS_KM = 2.0
+
 
 def _nearby_stops(timetable: Timetable, points, max_km: float) -> dict:
     """Stops within max_km of ANY of the given points (origin/dest), by haversine.
@@ -101,6 +106,7 @@ def plan_trip(origin, dest, depart_at: datetime, timetable: Timetable, *,
               objective: Objective = Objective.AIR_PRIORITY, top_n: int = 3,
               conditions: frozenset = frozenset(), geocoder=None,
               road: bool = False, turn_aware: bool = False,
+              access: str = "car",
               region: str | None = None, data_dir: str | None = None,
               connector: RoadConnector | None = None) -> list[Itinerary]:
     """Rank door-to-door multimodal itineraries between two locations.
@@ -122,18 +128,33 @@ def plan_trip(origin, dest, depart_at: datetime, timetable: Timetable, *,
     and junction/signal costs. It needs signal + restriction data: a `data_dir`
     built with `build_region(..., turn_aware=True)`, or an online parse.
 
+    `access` selects the first/last-mile mode (like a "Driving" vs "Transit" tab).
+    "car" (default) drives/walks to the nearest stop. "transit" only walks to a
+    stop within a short radius, so longer hops (e.g. the train to the airport) go
+    via the scheduled network -- use it for a no-car door-to-door trip. With
+    "transit" there are no car legs, so `road`/`turn_aware` do not apply.
+
     Returns up to `top_n` Itinerary objects, best first for `objective`. An EMPTY
     list means no route exists (not an error); an invalid coordinate raises.
     """
     o = _coerce(origin, geocoder=geocoder)
     d = _coerce(dest, geocoder=geocoder)
 
+    if access not in ("car", "transit"):
+        raise ValueError(f"access must be 'car' or 'transit', got {access!r}")
     if turn_aware and not road:
         raise ValueError("turn_aware=True requires road=True (it tunes the road "
                          "connector; the geometric connector has no turns).")
+    if access == "transit" and road:
+        raise ValueError("access='transit' has no car legs, so road=True does not "
+                         "apply; drop road/turn_aware for a transit-access trip.")
 
     if connector is None:
-        if road:
+        if access == "transit":
+            connector = GeometricConnector(timetable.stops,
+                                           max_access_km=WALK_ACCESS_KM,
+                                           walk_threshold_km=WALK_ACCESS_KM)
+        elif road:
             connector = _road_connector(o, d, timetable, region, data_dir,
                                         turn_aware)
         if connector is None:

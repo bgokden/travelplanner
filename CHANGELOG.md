@@ -36,6 +36,15 @@ All notable changes to this project are documented here. The format is based on
   cross-region trip falls back to geometric); each side is pre-filtered to its
   endpoint's nearby stops and honours `turn_aware`. The cross-region pure-ground
   drive spans no single graph, so `direct` is delegated to a geometric estimate.
+- Transit access mode (`plan_trip(..., access="transit")`): selects the
+  first/last-mile mode like a "Driving" vs "Transit" tab. The default `"car"`
+  drives/walks to the nearest stop; `"transit"` only walks to a stop within a
+  short radius, so longer access hops (e.g. the train to the airport) are taken
+  via the scheduled network instead of driving. This surfaces walk -> train ->
+  flight itineraries that the car-access default hides: driving straight to the
+  airport reaches the same flight with fewer transfers and so dominates the
+  train-access variant on the Pareto frontier. With `"transit"` there are no car
+  legs, so `road`/`turn_aware` do not apply (passing both raises).
 - Multimodal itinerary map (`viz.itinerary_map_html` / `save_itinerary_map`):
   render a `plan_trip` itinerary's legs as per-mode coloured segments (walk grey,
   car blue, train green, ferry teal, flight orange) on one self-contained Leaflet
