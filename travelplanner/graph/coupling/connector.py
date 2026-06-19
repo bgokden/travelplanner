@@ -119,13 +119,8 @@ class CCHConnector:
         self._customized: dict[frozenset[str], object] = {}
 
     def _nearest_node(self, lat: float, lon: float) -> str:
-        g = self.router.graph
-        best_i, best_d = 0, float("inf")
-        for i in range(g.node_count):
-            d = haversine(lat, lon, g.latitude[i], g.longitude[i])
-            if d < best_d:
-                best_i, best_d = i, d
-        return g.key(best_i)
+        idx, _ = self.router.node_grid.nearest(lat, lon)
+        return self.router.graph.key(idx)
 
     def _road(self, conditions: frozenset[str], day):
         # cache one customized metric per (conditions); the planner uses one day.

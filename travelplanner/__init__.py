@@ -36,6 +36,7 @@ from travelplanner.samples import sample_timetable, sample_trip
 from travelplanner.roads import (
     DriveResult,
     REGIONS,
+    build_region,
     download_region,
     drive,
     prefetch,
@@ -71,6 +72,7 @@ __all__ = [
     "DriveResult",
     "road_router",
     "region_connector",
+    "build_region",
     "download_region",
     "prefetch",
     "REGIONS",
