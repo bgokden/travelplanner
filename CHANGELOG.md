@@ -4,6 +4,15 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+- The heuristic estimator no longer proposes ground (car/train) itineraries for
+  trips beyond a plausible ground range (e.g. a "train across the ocean" for
+  New York -> Tokyo). Car and train now have an upper distance bound, enforced
+  alongside the existing lower bounds. The estimator remains distance-bounded,
+  not land-route-aware (use the multimodal engine for real routing).
+
 ## [0.1.0] - 2026-06-19
 
 Initial release.
