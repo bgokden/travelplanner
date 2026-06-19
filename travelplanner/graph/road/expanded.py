@@ -121,6 +121,12 @@ class ExpandedCustomized:
             return None, None
         return res.distance, list(res.node_path)
 
+    def route(self, from_key, to_key) -> RoadPath | None:
+        """Turn-aware shortest path between two base node keys (resolves to
+        indices). Mirrors CustomizedRoad.route so a connector is router-agnostic."""
+        g = self._router.graph
+        return self.route_index(g.index(from_key), g.index(to_key))
+
     def route_index(self, from_node: int, to_node: int) -> RoadPath | None:
         """Turn-aware shortest path between two base node indices."""
         exp = self._router.expanded

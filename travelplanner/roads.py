@@ -248,11 +248,18 @@ def build_region(region: str, out_dir: str, *, turn_aware: bool = False) -> str:
     return out_dir
 
 
-def region_connector(region: str, stops, *, data_dir: str | None = None, **kwargs):
-    """A street-accurate CCHConnector backed by the region's road network."""
+def region_connector(region: str, stops, *, data_dir: str | None = None,
+                     turn_aware: bool = False, **kwargs):
+    """A street-accurate CCHConnector backed by the region's road network.
+
+    turn_aware=True backs it with the edge-expanded, turn-aware router (turn
+    restrictions + junction/signal costs), so access/egress/direct driving times
+    are turn-correct. It needs signal + restriction data: pass a data_dir built
+    with build_region(..., turn_aware=True), or omit data_dir to parse online.
+    """
     from travelplanner.graph.coupling import CCHConnector
 
-    return CCHConnector(road_router(region, data_dir), stops, **kwargs)
+    return CCHConnector(_router_for(region, data_dir, turn_aware), stops, **kwargs)
 
 
 def _coerce(point, *, geocoder=None) -> Location:

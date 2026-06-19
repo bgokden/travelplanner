@@ -5,7 +5,13 @@ from datetime import timedelta
 import pytest
 
 from travelplanner.roads import Route
-from travelplanner.viz import route_map_html, save_route_map
+from travelplanner.viz import (
+    itinerary_map_html,
+    route_map_html,
+    save_itinerary_map,
+    save_route_map,
+)
+from travelplanner import plan_trip, sample_timetable, sample_trip
 
 
 def _route():
@@ -38,3 +44,30 @@ def test_save_route_map(tmp_path):
 def test_not_drivable_raises():
     with pytest.raises(ValueError):
         route_map_html(Route(False))
+
+
+def _itinerary():
+    origin, dest, depart = sample_trip()
+    return plan_trip(origin, dest, depart, sample_timetable())[0]
+
+
+def test_itinerary_map_html_colors_legs_by_mode():
+    html = itinerary_map_html(_itinerary(), title="Trip")
+    assert "leaflet" in html.lower()
+    # the dominant leg's mode colour appears (flight orange or train green)
+    assert "#dd6b20" in html or "#2f855a" in html
+    # legend shows leg arrows between endpoints
+    assert "&rarr;" in html
+
+
+def test_save_itinerary_map(tmp_path):
+    path = save_itinerary_map(_itinerary(), str(tmp_path / "trip.html"))
+    assert path.endswith("trip.html")
+    assert "polyline" in open(path).read()
+
+
+def test_empty_itinerary_map_raises():
+    from travelplanner.models import Itinerary
+    from datetime import datetime
+    with pytest.raises(ValueError):
+        itinerary_map_html(Itinerary(legs=[], depart_at=datetime(2026, 7, 1), score=0.0))

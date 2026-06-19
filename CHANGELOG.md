@@ -7,6 +7,30 @@ All notable changes to this project are documented here. The format is based on
 ## [Unreleased]
 
 ### Added
+- Door-to-door multimodal trip planning (`plan_trip`): give two locations (name,
+  "lat,lon", tuple, or Location), a departure time, and a GTFS `Timetable`, and
+  get ranked door-to-door itineraries (ground access -> rail/ferry/flight
+  line-haul -> egress) over the Pareto frontier for an `Objective`. It is glue
+  over the existing engine: it geocodes the endpoints and picks a connector, so
+  the caller no longer hand-builds one. Default access/egress is the region-free
+  `GeometricConnector`; `road=True` upgrades to a road-network connector when one
+  Geofabrik region covers both endpoints (and only the nearby stops are snapped,
+  not the whole feed), falling back to geometric for cross-border trips rather
+  than loading a country-scale extract. An explicit `connector=` overrides the
+  choice. `turn_aware=True` (with `road=True`) backs the road connector with the
+  edge-expanded, turn-correct router, so the driving legs (access/egress and the
+  direct-drive candidate) honour turn restrictions and junction/signal costs
+  (validated Zaandam->Amsterdam: the direct drive 20.2 -> 24.0 min, +19%, vs the
+  node-based estimate). It needs a `data_dir` built with
+  `build_region(..., turn_aware=True)` or an online parse.
+- `region_connector(..., turn_aware=True)` and a key-based
+  `ExpandedCustomized.route(from_key, to_key)` (mirroring the node-based
+  `CustomizedRoad.route`), so a `CCHConnector` can be backed by the turn-aware
+  router and stays router-agnostic.
+- Multimodal itinerary map (`viz.itinerary_map_html` / `save_itinerary_map`):
+  render a `plan_trip` itinerary's legs as per-mode coloured segments (walk grey,
+  car blue, train green, ferry teal, flight orange) on one self-contained Leaflet
+  map, with a per-leg legend.
 - Turn-aware driving (`drive(..., turn_aware=True)`): routes over an
   edge-expanded graph (nodes = road arcs, edges = turns) so turn restrictions and
   turn/junction costs are modelled like a production router. OSM via-node turn

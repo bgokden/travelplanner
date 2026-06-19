@@ -82,3 +82,54 @@ def route_map_html(route, *, title: str = "Route") -> str:
 def save_route_map(route, path: str, *, title: str = "Route") -> str:
     """Write a single-route map to `path`; return the path."""
     return save_routes_map([(route, title, "#2b6cb0")], path, title=title)
+
+
+# Per-mode colours for a multimodal itinerary (walk/car access + line-haul).
+MODE_COLORS = {
+    "walk": "#718096",
+    "car": "#2b6cb0",
+    "train": "#2f855a",
+    "ferry": "#319795",
+    "flight": "#dd6b20",
+}
+
+
+def _itinerary_layers(itinerary) -> tuple[list, list]:
+    """One coloured straight segment per leg (endpoint to endpoint).
+
+    Each leg only knows its from/to coordinates (stop or endpoint), so segments
+    are straight lines between them, coloured by mode. A road-backed access leg
+    with real geometry is out of scope here; this is the door-to-door overview.
+    """
+    data, legend_rows = [], []
+    for i, leg in enumerate(itinerary.legs, 1):
+        mode = leg.mode.value
+        color = MODE_COLORS.get(mode, "#000000")
+        coords = [[leg.from_loc.lat, leg.from_loc.lon],
+                  [leg.to_loc.lat, leg.to_loc.lon]]
+        mins = leg.duration.total_seconds() / 60
+        label = (f"{i}. {mode}: {leg.from_loc.name} &rarr; {leg.to_loc.name} "
+                 f"({leg.distance_km:.0f} km &middot; {mins:.0f} min)")
+        data.append({"coords": coords, "color": color, "label": label})
+        legend_rows.append(
+            f'<span class="sw" style="background:{color}"></span>{label}')
+    return data, legend_rows
+
+
+def itinerary_map_html(itinerary, *, title: str = "Trip") -> str:
+    """Self-contained HTML drawing one door-to-door itinerary's legs by mode."""
+    data, legend_rows = _itinerary_layers(itinerary)
+    if not data:
+        raise ValueError("itinerary has no legs to draw")
+    arrive = itinerary.arrive_at.strftime("%H:%M")
+    head = (f'{itinerary.depart_at.strftime("%a %H:%M")} &rarr; {arrive} '
+            f'&middot; {itinerary.total_minutes:.0f} min')
+    legend = head + "<br>" + "<br>".join(legend_rows)
+    return _TEMPLATE.format(title=title, legend=legend, layers=json.dumps(data))
+
+
+def save_itinerary_map(itinerary, path: str, *, title: str = "Trip") -> str:
+    """Write a multimodal itinerary map to `path`; return the path."""
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(itinerary_map_html(itinerary, title=title))
+    return path

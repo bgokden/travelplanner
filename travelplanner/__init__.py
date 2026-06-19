@@ -39,6 +39,7 @@ from travelplanner.graph.coupling import (
     RoadConnector,
     plan,
 )
+from travelplanner.trips import plan_trip
 from travelplanner.samples import sample_timetable, sample_trip
 from travelplanner.roads import (
     DriveResult,
@@ -72,6 +73,7 @@ from travelplanner.speed import (
 
 __all__ = [
     "plan",
+    "plan_trip",
     # location helpers
     "place",
     "city",
