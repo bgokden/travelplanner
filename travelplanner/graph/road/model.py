@@ -1,0 +1,132 @@
+"""Road network topology for the CCH engine (country-scale layout).
+
+Arc and coordinate data are stored as packed `array` columns. Per-arc Validity
+objects and names are interned: each arc holds a small int index into a
+validity_table / name_table. At country scale most arcs share the same validity
+(no seasonal restriction), so interning collapses millions of objects to a
+handful of table entries, and customization evaluates each distinct validity
+once per query rather than once per arc.
+"""
+
+from array import array
+from dataclasses import dataclass
+
+from travelplanner.graph.validity import ALWAYS, Validity
+
+
+@dataclass(frozen=True)
+class RoadGraph:
+    node_keys: list[str]
+    node_index: dict[str, int]
+    latitude: array
+    longitude: array
+    tail: array
+    head: array
+    base_seconds: array
+    arc_validity: array          # int index into validity_table
+    validity_table: tuple[Validity, ...]
+    arc_name: array | None       # int index into name_table, or None
+    name_table: tuple[str, ...]
+
+    @property
+    def node_count(self) -> int:
+        return len(self.node_keys)
+
+    @property
+    def arc_count(self) -> int:
+        return len(self.tail)
+
+    def index(self, key: str) -> int:
+        return self.node_index[key]
+
+    def key(self, index: int) -> str:
+        return self.node_keys[index]
+
+    def arcs_by_name(self, name: str) -> list[int]:
+        if self.arc_name is None or name not in self.name_table:
+            return []
+        nidx = self.name_table.index(name)
+        return [i for i, v in enumerate(self.arc_name) if v == nidx]
+
+
+class RoadGraphBuilder:
+    def __init__(self, store_names: bool = True) -> None:
+        self._keys: list[str] = []
+        self._index: dict[str, int] = {}
+        self._lat = array("d")
+        self._lon = array("d")
+        self._tail = array("i")
+        self._head = array("i")
+        self._secs = array("i")
+        self._arc_validity = array("i")
+        self._validity_table: list[Validity] = []
+        self._validity_map: dict[Validity, int] = {}
+        self._store_names = store_names
+        self._arc_name = array("i") if store_names else None
+        self._name_table: list[str] = []
+        self._name_map: dict[str, int] = {}
+
+    def _intern_validity(self, validity: Validity) -> int:
+        idx = self._validity_map.get(validity)
+        if idx is None:
+            idx = len(self._validity_table)
+            self._validity_table.append(validity)
+            self._validity_map[validity] = idx
+        return idx
+
+    def _intern_name(self, name: str) -> int:
+        idx = self._name_map.get(name)
+        if idx is None:
+            idx = len(self._name_table)
+            self._name_table.append(name)
+            self._name_map[name] = idx
+        return idx
+
+    def add_node(self, key: str, lat: float, lon: float) -> int:
+        idx = self._index.get(key)
+        if idx is not None:
+            return idx
+        idx = len(self._keys)
+        self._index[key] = idx
+        self._keys.append(key)
+        self._lat.append(lat)
+        self._lon.append(lon)
+        return idx
+
+    def add_arc(self, from_key: str, to_key: str, seconds: float,
+                validity: Validity = ALWAYS, name: str = "") -> int:
+        if from_key not in self._index:
+            raise KeyError(f"Unknown from_node {from_key!r}; add_node first")
+        if to_key not in self._index:
+            raise KeyError(f"Unknown to_node {to_key!r}; add_node first")
+        arc = len(self._tail)
+        self._tail.append(self._index[from_key])
+        self._head.append(self._index[to_key])
+        self._secs.append(int(round(seconds)))
+        self._arc_validity.append(self._intern_validity(validity))
+        if self._arc_name is not None:
+            self._arc_name.append(self._intern_name(name))
+        return arc
+
+    def add_road(self, a_key: str, b_key: str, seconds: float,
+                 validity: Validity = ALWAYS, name: str = "",
+                 bidirectional: bool = True) -> list[int]:
+        arcs = [self.add_arc(a_key, b_key, seconds, validity, name)]
+        if bidirectional:
+            arcs.append(self.add_arc(b_key, a_key, seconds, validity, name))
+        return arcs
+
+    def build(self) -> RoadGraph:
+        return RoadGraph(
+            node_keys=list(self._keys),
+            node_index=dict(self._index),
+            latitude=self._lat,
+            longitude=self._lon,
+            tail=self._tail,
+            head=self._head,
+            base_seconds=self._secs,
+            arc_validity=self._arc_validity,
+            validity_table=tuple(self._validity_table),
+            arc_name=self._arc_name,
+            name_table=tuple(self._name_table),
+        )
