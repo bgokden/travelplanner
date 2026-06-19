@@ -46,17 +46,19 @@ Try the bundled sample — no data required:
 travelplanner demo
 ```
 
-In code, the multimodal planner needs a `Timetable` and a `RoadConnector`. The
-package ships a sample so you can run immediately:
+In code, `plan_trip` is the one-call, door-to-door entry point: give it two
+locations (a name, a `"lat,lon"` string, a tuple, or a `Location`), a departure
+time, and a `Timetable`. It geocodes the endpoints, picks a connector, and plans
+the whole journey — you do not hand-build a connector. The package ships a sample
+so you can run immediately:
 
 ```python
-from travelplanner import plan, GeometricConnector, Objective, sample_timetable, sample_trip
+from travelplanner import plan_trip, Objective, sample_timetable, sample_trip
 
 tt = sample_timetable()
-conn = GeometricConnector(tt.stops)
 origin, dest, depart = sample_trip()
 
-for it in plan(origin, dest, depart, tt, conn, objective=Objective.AIR_PRIORITY):
+for it in plan_trip(origin, dest, depart, tt, objective=Objective.AIR_PRIORITY):
     print(it.primary_mode.value, it.arrive_at, it.cost_level.value)
     for leg in it.legs:
         print("  ", leg.mode.value, leg.from_loc.name, "->", leg.to_loc.name)
@@ -65,19 +67,43 @@ for it in plan(origin, dest, depart, tt, conn, objective=Objective.AIR_PRIORITY)
 Switch the objective to `FASTEST`, `CHEAPEST`, or `FEWEST_TRANSFERS` to see the
 frontier reorder.
 
-## Using your own data
+**Choosing how the first/last mile works:**
 
 ```python
-from travelplanner import load_timetable, GeometricConnector, plan
+# Real road network for access/egress (one region auto-selected from the
+# coordinates; a trip spanning two regions auto-splits per endpoint):
+plan_trip(origin, dest, depart, tt, road=True)
+plan_trip(origin, dest, depart, tt, road=True, turn_aware=True)  # turn restrictions + junction costs
+
+# Prefer public transport for the first/last mile, like a "Transit" tab:
+# walk to the nearest stop and take the train to the airport instead of driving.
+plan_trip(origin, dest, depart, tt, access="transit")
+```
+
+`plan(origin, dest, depart, tt, connector, ...)` remains available as the
+lower-level call when you want to build and pass a specific `RoadConnector`
+yourself.
+
+## Using your own data
+
+Supply a GTFS feed as the `Timetable` and let `plan_trip` do the rest:
+
+```python
+from travelplanner import load_timetable, plan_trip
 
 tt = load_timetable("path/to/gtfs_feed/")     # GTFS: stops, routes, trips,
                                               # stop_times, calendar(_dates)
-conn = GeometricConnector(tt.stops)           # straight-line access/egress
-results = plan(origin, dest, depart, tt, conn)
+results = plan_trip("Amsterdam", "Vaduz", depart, tt)            # straight-line access
+results = plan_trip("Amsterdam", "Vaduz", depart, tt, road=True) # real road access
 ```
 
-For street-accurate access/egress over a real road network, build a CCH router
-from an OpenStreetMap extract and use `CCHConnector` (requires the `road` extra):
+Transit feeds are not auto-discovered (unlike road extracts): you supply the
+feed, and transit quality is feed quality. With `road=True` the road extract is
+auto-selected from the coordinates and cached; a cross-region trip resolves a
+separate extract per endpoint (a `SplitConnector`), and a trip no single extract
+covers falls back to straight-line access rather than loading a continent.
+
+For full manual control you can still build a connector and call `plan` directly:
 
 ```python
 from travelplanner.graph.road.osm import load_road_graph

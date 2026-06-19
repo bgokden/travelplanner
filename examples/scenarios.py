@@ -11,7 +11,7 @@ European), so no cross-timezone conversion is involved.
 
 from datetime import datetime, timedelta
 
-from travelplanner import place, plan, Objective
+from travelplanner import place, plan, plan_trip, Objective
 from travelplanner.models import CostLevel, LocationType, Mode
 from travelplanner.graph.schema import NodeType
 from travelplanner.graph.scheduled import Stop, Timetable, make_trip
@@ -95,6 +95,27 @@ def location_kinds():
     return tt, conn, dest, origins, depart
 
 
+def airport_access():
+    """Door-to-door with plan_trip and a choice of first/last mile.
+
+    A local train (Amsterdam Centraal -> Schiphol) feeds an onward flight. With
+    car access plan_trip drives to the airport; with access="transit" it walks to
+    the station and takes the train. Returns (timetable, origin, dest, departure).
+    """
+    tt = Timetable()
+    tt.add_stop(Stop("ASD_CS", "Amsterdam Centraal", 52.3791, 4.9003, NodeType.RAIL_STATION))
+    tt.add_stop(Stop("SPL", "Schiphol", 52.3105, 4.7683, NodeType.AIRPORT))
+    tt.add_stop(Stop("VAD", "Vaduz Airfield", 47.140, 9.510, NodeType.AIRPORT))
+    tt.add_trip(make_trip("IC-DIRECT", Mode.TRAIN,
+                          [("ASD_CS", "09:00", "09:00"), ("SPL", "09:16", "09:16")]))
+    tt.add_trip(make_trip("LX-FLT", Mode.FLIGHT,
+                          [("SPL", "10:00", "10:00"), ("VAD", "11:30", "11:30")],
+                          cost_level=CostLevel.HIGH))
+    origin = place("Amsterdam centre", LocationType.HOTEL, 52.3702, 4.8952)
+    dest = place("Vaduz, Liechtenstein", LocationType.HOTEL, 47.1410, 9.5215)
+    return tt, origin, dest, datetime(2026, 7, 1, 7, 30)
+
+
 def _show(title, results):
     print(f"\n{title}")
     if not results:
@@ -127,3 +148,10 @@ if __name__ == "__main__":
         print(f"  {o.type.value:8} {o.name:18} -> first hop: "
               f"{access.mode.value} to {access.to_loc.name} ({mins} min), "
               f"then {it.primary_mode.value}, arrive {it.arrive_at:%H:%M}")
+
+    tt, origin, dest, depart = airport_access()
+    print("\nplan_trip door-to-door, choosing the first/last mile:")
+    for access in ("car", "transit"):
+        it = plan_trip(origin, dest, depart, tt, access=access)[0]
+        chain = " -> ".join(leg.mode.value for leg in it.legs)
+        print(f"  access={access:8} {chain}, arrive {it.arrive_at:%H:%M}")
