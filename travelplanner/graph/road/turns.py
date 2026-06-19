@@ -166,7 +166,13 @@ class ExpandedRoadGraph:
 def build_expanded_graph(base: RoadGraph, *, uturn_seconds: float = 120.0,
                          turn_seconds: float = 0.0, forbidden=None,
                          turn_costs: "TurnCosts | None" = None) -> ExpandedRoadGraph:
-    """Build the turn-expanded graph from a base RoadGraph (see ExpandedRoadGraph)."""
+    """Build the turn-expanded graph from a base RoadGraph (see ExpandedRoadGraph).
+
+    forbidden turns default to the graph's OSM turn restrictions
+    (base.restricted_turns) when not given explicitly.
+    """
+    if forbidden is None:
+        forbidden = getattr(base, "restricted_turns", None) or frozenset()
     topo = build_turn_topology(base, uturn_seconds=uturn_seconds,
                                turn_seconds=turn_seconds, forbidden=forbidden,
                                turn_costs=turn_costs)

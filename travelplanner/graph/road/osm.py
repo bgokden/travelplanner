@@ -30,6 +30,44 @@ DRIVING_HIGHWAYS = frozenset(DEFAULT_SPEED_KMH)
 # Node highway tags that add a turn delay at the junction.
 SIGNAL_TAGS = frozenset({"traffic_signals"})
 
+# Turn-restriction relation values we honour (via-node only; via-way deferred).
+_RESTRICT_NO = frozenset({
+    "no_left_turn", "no_right_turn", "no_u_turn", "no_straight_on",
+    "no_entry", "no_exit"})
+_RESTRICT_ONLY = frozenset({
+    "only_left_turn", "only_right_turn", "only_straight_on", "only_u_turn"})
+
+
+def resolve_restrictions(restrictions, arc_into, arc_outof, out_by_node,
+                         node_index) -> set:
+    """Map via-node restrictions to forbidden (in_arc, out_arc) turn pairs.
+
+    restrictions: list of (from_way, via_osm_node, to_way, kind) with kind in
+    {"no", "only"}. arc_into/arc_outof: {(way, via_osm_node): [arc indices]}
+    entering / leaving the via node on that way. out_by_node: {node_index:
+    [out-arc indices]}. node_index: {osm_node_id: internal index}.
+    """
+    forbidden: set = set()
+    for from_way, via, to_way, kind in restrictions:
+        from_arcs = arc_into.get((from_way, via))
+        to_arcs = arc_outof.get((to_way, via))
+        if not from_arcs or not to_arcs:
+            continue
+        if kind == "no":
+            for fa in from_arcs:
+                for ta in to_arcs:
+                    forbidden.add((fa, ta))
+        else:  # only_: from this approach, every turn except to_arcs is banned
+            vidx = node_index.get(via)
+            if vidx is None:
+                continue
+            allowed_out = set(to_arcs)
+            for fa in from_arcs:
+                for out_arc in out_by_node.get(vidx, ()):
+                    if out_arc not in allowed_out:
+                        forbidden.add((fa, out_arc))
+    return forbidden
+
 _MONTHS = {m: i for i, m in enumerate(
     ["jan", "feb", "mar", "apr", "may", "jun",
      "jul", "aug", "sep", "oct", "nov", "dec"], start=1)}
@@ -97,12 +135,60 @@ def _is_oneway(tags: dict[str, str]) -> int:
     return 0
 
 
+def _collect_restrictions(pbf_path: str) -> list:
+    """First pass: via-node turn restrictions as (from_way, via, to_way, kind)."""
+    import osmium
+
+    class _RelHandler(osmium.SimpleHandler):
+        def __init__(self) -> None:
+            super().__init__()
+            self.restrictions: list = []
+
+        def relation(self, r) -> None:
+            tags = {t.k: t.v for t in r.tags}
+            if tags.get("type") != "restriction":
+                return
+            value = tags.get("restriction")        # ignore restriction:conditional
+            if value in _RESTRICT_NO:
+                kind = "no"
+            elif value in _RESTRICT_ONLY:
+                kind = "only"
+            else:
+                return
+            from_way = to_way = via = None
+            for m in r.members:
+                if m.type == "w" and m.role == "from":
+                    from_way = m.ref
+                elif m.type == "w" and m.role == "to":
+                    to_way = m.ref
+                elif m.role == "via":
+                    via = m.ref if m.type == "n" else "way"   # via-way: skip
+            if from_way and to_way and isinstance(via, int):
+                self.restrictions.append((from_way, via, to_way, kind))
+
+    handler = _RelHandler()
+    handler.apply_file(pbf_path)
+    return handler.restrictions
+
+
 def load_road_graph(pbf_path: str,
                     allowed: frozenset[str] = DRIVING_HIGHWAYS,
-                    store_names: bool = True) -> RoadGraph:
+                    store_names: bool = True,
+                    turn_data: bool = False) -> RoadGraph:
+    """Load a routable RoadGraph from an OSM extract.
+
+    turn_data=True also collects traffic-signal nodes and parses turn-restriction
+    relations (for turn-aware routing). It costs an extra file pass, so the
+    node-based default leaves it off.
+    """
     import osmium
 
     builder = RoadGraphBuilder(store_names=store_names)
+    restr = _collect_restrictions(pbf_path) if turn_data else []
+    needed_ways = {fw for fw, _, _, _ in restr} | {tw for _, _, tw, _ in restr}
+    needed_via = {via for _, via, _, _ in restr}
+    arc_into: dict = {}
+    arc_outof: dict = {}
 
     class _Handler(osmium.SimpleHandler):
         def __init__(self) -> None:
@@ -110,6 +196,8 @@ def load_road_graph(pbf_path: str,
             self.signals: set[int] = set()   # OSM ids of traffic-signal nodes
 
         def node(self, n) -> None:
+            if not turn_data:
+                return
             for t in n.tags:
                 if t.k == "highway" and t.v in SIGNAL_TAGS:
                     self.signals.add(n.id)
@@ -125,6 +213,7 @@ def load_road_graph(pbf_path: str,
             validity = parse_seasonal_closure(tags)
             name = tags.get("name", "")
             direction = _is_oneway(tags)
+            track = w.id in needed_ways
 
             pts = [(n.ref, n.location.lat, n.location.lon)
                    for n in w.nodes if n.location.valid()]
@@ -138,11 +227,32 @@ def load_road_graph(pbf_path: str,
                     builder.mark_signal(ib)
                 dist_km = haversine(alat, alon, blat, blon)
                 seconds = dist_km / speed * 3600.0
+                fwd = rev = None
                 if direction >= 0:
-                    builder.add_arc(ka, kb, seconds, validity, name, highway)
+                    fwd = builder.add_arc(ka, kb, seconds, validity, name, highway)
                 if direction <= 0:
-                    builder.add_arc(kb, ka, seconds, validity, name, highway)
+                    rev = builder.add_arc(kb, ka, seconds, validity, name, highway)
+                if track:
+                    if kb in needed_via:
+                        if fwd is not None:
+                            arc_into.setdefault((w.id, kb), []).append(fwd)
+                        if rev is not None:
+                            arc_outof.setdefault((w.id, kb), []).append(rev)
+                    if ka in needed_via:
+                        if fwd is not None:
+                            arc_outof.setdefault((w.id, ka), []).append(fwd)
+                        if rev is not None:
+                            arc_into.setdefault((w.id, ka), []).append(rev)
 
     handler = _Handler()
     handler.apply_file(pbf_path, locations=True)
+
+    if restr:
+        out_by_node: dict = {}
+        tails = builder._tail
+        for i in range(len(tails)):
+            out_by_node.setdefault(tails[i], []).append(i)
+        forbidden = resolve_restrictions(restr, arc_into, arc_outof,
+                                         out_by_node, builder._index)
+        builder.set_restricted_turns(forbidden)
     return builder.build()

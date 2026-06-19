@@ -193,9 +193,16 @@ def _expanded_router_cached(region: str, data_dir: str | None):
     from travelplanner.graph.road.expanded import ExpandedCCHRoadRouter
     from travelplanner.graph.road.turns import TurnCosts, build_expanded_graph
 
-    base = _road_router_cached(region, data_dir)
+    if data_dir is not None:
+        # offline artifact (signals/restrictions persisted in a later stage)
+        base = _road_router_cached(region, data_dir).graph
+    else:
+        # turn-aware needs signal + turn-restriction data, so load it explicitly
+        from travelplanner.graph.road.osm import load_road_graph
+        base = load_road_graph(download_region(region), store_names=False,
+                               turn_data=True)
     # geometric turn costs (left/right/straight/sharp/U-turn) + signal surcharge
-    expanded = build_expanded_graph(base.graph, turn_costs=TurnCosts())
+    expanded = build_expanded_graph(base, turn_costs=TurnCosts())
     return ExpandedCCHRoadRouter(expanded)
 
 
