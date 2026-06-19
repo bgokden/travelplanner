@@ -50,6 +50,18 @@ def test_door_to_door_train_beats_driving():
                    for it in results)
 
 
+def test_geometric_connector_refuses_transoceanic_ground():
+    # New York -> Tokyo straight line is ~10,800 km; the geometric connector
+    # must not offer a pure-ground "drive across the ocean" candidate.
+    conn = GeometricConnector({})
+    ny = place("New York", LocationType.CITY, 40.71, -74.01)
+    tokyo = place("Tokyo", LocationType.CITY, 35.68, 139.69)
+    assert conn.direct(ny, tokyo, frozenset()) is None
+    # A plausible regional distance still gets a ground leg.
+    nearby = place("Philadelphia", LocationType.CITY, 39.95, -75.17)
+    assert conn.direct(ny, nearby, frozenset()) is not None
+
+
 def test_short_trip_is_pure_ground():
     tt = Timetable()
     tt.add_stop(_stop("Far1", 47.0, 7.0))

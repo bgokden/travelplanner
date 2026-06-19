@@ -89,24 +89,16 @@ conn = CCHConnector(road, tt.stops, stop_to_node={...})
 results = plan(origin, dest, depart, tt, conn)
 ```
 
-## Quick heuristic estimate
-
-For a zero-setup guess from just two locations (bundled airport/city tables, no
-timetable, estimates rather than schedules):
-
-```python
-from datetime import datetime
-from travelplanner import estimate, city
-
-for it in estimate(city("New York"), city("Tokyo"), datetime(2026, 7, 1, 8, 0)):
-    print(it.primary_mode.value, it.total_duration, it.cost_level.value)
-```
-
-or from the CLI:
+## CLI
 
 ```bash
-travelplanner estimate "London" "Paris" --at 2026-07-01T08:00
+travelplanner demo                              # bundled sample, all objectives
+travelplanner plan "London" "Paris"             # over the bundled sample timetable
+travelplanner plan "47.0,7.0" "45.0,9.0" --gtfs feed/ --objective cheapest
 ```
+
+`plan` takes a `lat,lon` or a bundled city name for origin/destination; with no
+`--gtfs` it uses the bundled sample timetable.
 
 ## How air priority works
 
