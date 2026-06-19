@@ -24,6 +24,17 @@ def test_long_haul_prefers_air():
     assert results[0].primary_mode is Mode.FLIGHT
 
 
+def test_transoceanic_offers_no_ground_modes():
+    # New York -> Tokyo is far beyond any plausible ground range, so the
+    # heuristic must not propose a "drive/train across the ocean" option.
+    # (A flight itinerary may still contain short car access legs to airports.)
+    results = estimate(city("New York"), city("Tokyo"), START)
+    assert results
+    ground_only = [it for it in results
+                   if it.primary_mode in (Mode.CAR, Mode.TRAIN, Mode.WALK)]
+    assert ground_only == []
+
+
 def test_air_suppressed_below_min_distance():
     origin = place("Hotel A", LocationType.HOTEL, 40.7128, -74.0060)
     dest = place("Hotel B", LocationType.HOTEL, 40.7300, -74.0100)

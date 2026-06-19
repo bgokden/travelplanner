@@ -28,16 +28,14 @@ def _ground_candidates(origin: Location, dest: Location,
     road_km = road_distance(origin.lat, origin.lon, dest.lat, dest.lon,
                             config.detour_factor)
     candidates: list[list[Leg]] = []
-
-    walk = config.profiles[Mode.WALK]
-    if road_km <= walk.max_distance_km:
-        candidates.append([_build_leg(Mode.WALK, origin, dest, road_km, config)])
-
-    candidates.append([_build_leg(Mode.CAR, origin, dest, road_km, config)])
-
-    train = config.profiles[Mode.TRAIN]
-    if road_km >= train.min_distance_km:
-        candidates.append([_build_leg(Mode.TRAIN, origin, dest, road_km, config)])
+    # A ground mode is offered only within its plausible distance band. The
+    # upper bound matters because this heuristic has no land-route awareness:
+    # without it, transoceanic pairs (e.g. New York -> Tokyo) would otherwise
+    # produce a nonsensical "drive/train across the ocean" candidate.
+    for mode in (Mode.WALK, Mode.CAR, Mode.TRAIN):
+        profile = config.profiles[mode]
+        if profile.min_distance_km <= road_km <= profile.max_distance_km:
+            candidates.append([_build_leg(mode, origin, dest, road_km, config)])
 
     return candidates
 

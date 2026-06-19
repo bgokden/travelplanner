@@ -26,12 +26,14 @@ DEFAULT_PROFILES: dict[Mode, ModeProfile] = {
         avg_speed_kmh=65.0,
         overhead=timedelta(minutes=5),
         cost_level=CostLevel.MEDIUM,
+        max_distance_km=1500.0,
     ),
     Mode.TRAIN: ModeProfile(
         avg_speed_kmh=120.0,
         overhead=timedelta(minutes=20),
         cost_level=CostLevel.MEDIUM,
         min_distance_km=20.0,
+        max_distance_km=1500.0,
     ),
     Mode.FLIGHT: ModeProfile(
         avg_speed_kmh=750.0,
