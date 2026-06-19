@@ -1,5 +1,9 @@
 # travelplanner
 
+[![CI](https://github.com/bgokden/travelplanner/actions/workflows/ci.yml/badge.svg)](https://github.com/bgokden/travelplanner/actions/workflows/ci.yml)
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+
 Multimodal, door-to-door travel planning that prioritizes air travel.
 
 Given two locations (hotel, city, landmark, station, airport) and a departure
