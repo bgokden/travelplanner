@@ -145,3 +145,25 @@ def test_cch_connector_door_to_door():
     assert top.arrive_at == datetime(2026, 7, 1, 11, 0)
     assert top.legs[0].mode is Mode.CAR          # road access from Bern
     assert any(leg.mode is Mode.TRAIN for leg in top.legs)
+
+
+def test_cch_connector_access_with_default_day():
+    """day=None is valid per the RoadConnector protocol (current conditions);
+    CCHConnector must not crash on a seasonally-validated graph."""
+    pytest.importorskip("routingkit_cch")
+    from travelplanner.graph.road import CCHRoadRouter, RoadGraphBuilder
+    from travelplanner.graph.coupling import CCHConnector
+
+    b = RoadGraphBuilder()
+    b.add_node("a", 47.0, 7.0)
+    b.add_node("b", 47.0, 7.05)
+    b.add_road("a", "b", 300)
+    router = CCHRoadRouter(b.build())
+
+    tt = Timetable()
+    tt.add_stop(_stop("B", 47.0, 7.05))
+    conn = CCHConnector(router, tt.stops, stop_to_node={"B": "b"})
+    origin = place("nearA", LocationType.HOTEL, 47.0, 7.0)
+
+    legs = conn.access(origin)               # day omitted -> defaults to today
+    assert "B" in legs and legs["B"].mode is Mode.CAR

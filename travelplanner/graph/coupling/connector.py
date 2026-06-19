@@ -11,7 +11,7 @@ snapping. Both expose the same methods so the planner is connector-agnostic.
 """
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from typing import Protocol
 
 from travelplanner.geo import haversine
@@ -167,6 +167,10 @@ class CCHConnector:
 
     def _road(self, conditions: frozenset[str], day):
         # cache one customized metric per (conditions); the planner uses one day.
+        # day=None means "current conditions" (seasonal validity needs a date),
+        # matching drive_route; the RoadConnector protocol allows it.
+        if day is None:
+            day = date.today()
         key = conditions
         road = self._customized.get(key)
         if road is None:
