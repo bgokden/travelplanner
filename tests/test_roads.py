@@ -4,6 +4,7 @@ import pytest
 
 from dataclasses import dataclass
 
+import travelplanner.roads as roads
 from travelplanner.models import Location, LocationType
 from travelplanner.graph.road.model import RoadGraph, RoadGraphBuilder
 from travelplanner.graph.road.spatial import NodeGrid
@@ -67,3 +68,18 @@ def test_snap_out_of_region_raises():
     r = _tiny_router()
     with pytest.raises(ValueError):
         _snap(r, Location("far", LocationType.HOTEL, 0.0, 0.0), "test")
+
+
+def test_road_router_cache_key_normalized(monkeypatch):
+    # road_router(region) and road_router(region, None) must reach the cached
+    # builder with identical args, so they share one cache entry (no rebuild).
+    calls = []
+
+    def fake(region, data_dir):
+        calls.append((region, data_dir))
+        return object()
+
+    monkeypatch.setattr(roads, "_road_router_cached", fake)
+    roads.road_router("switzerland")
+    roads.road_router("switzerland", None)
+    assert calls == [("switzerland", None), ("switzerland", None)]

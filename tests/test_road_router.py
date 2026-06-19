@@ -93,6 +93,27 @@ def test_partial_update_closes_and_reopens_pass():
     assert road.route("interlaken", "brig").seconds == 5100   # pass back
 
 
+def test_customized_caches_and_reuses_metric():
+    router = CCHRoadRouter(_swiss_graph(Validity(calendar=SUMMER_PASS)))
+    a = router.customized(date(2026, 7, 15))
+    b = router.customized(date(2026, 7, 15))
+    assert a is b                                  # same (day, conditions) reused
+    c = router.customized(date(2026, 1, 15))
+    assert c is not a                              # different key -> different metric
+    assert a.route("interlaken", "brig").seconds == 5100
+    assert c.route("interlaken", "brig").seconds == 6000
+
+
+def test_customize_returns_fresh_independent_metric():
+    router = CCHRoadRouter(_swiss_graph(Validity(calendar=SUMMER_PASS)))
+    one = router.customize(date(2026, 7, 15))
+    two = router.customize(date(2026, 7, 15))
+    assert one is not two                          # customize() never caches
+    one.close_named("Grimsel")                     # mutating one must not affect two
+    assert one.route("interlaken", "brig").seconds == 6000
+    assert two.route("interlaken", "brig").seconds == 5100
+
+
 def test_validity_is_interned():
     # Many arcs share ALWAYS plus one seasonal pass -> tiny validity table.
     graph = _swiss_graph(Validity(calendar=SUMMER_PASS))

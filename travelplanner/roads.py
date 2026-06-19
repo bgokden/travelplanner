@@ -119,13 +119,7 @@ def prefetch(regions, *, build: bool = False) -> list[str]:
 
 
 @lru_cache(maxsize=4)
-def road_router(region: str, data_dir: str | None = None):
-    """A CCHRoadRouter for the region (built once per process, then cached).
-
-    With data_dir, load a prebuilt offline artifact (no network, no OSM parse,
-    no contraction-order computation). Otherwise download the OSM extract and
-    build from scratch.
-    """
+def _road_router_cached(region: str, data_dir: str | None):
     from travelplanner.graph.road import CCHRoadRouter
 
     if data_dir is not None:
@@ -136,6 +130,24 @@ def road_router(region: str, data_dir: str | None = None):
     from travelplanner.graph.road.osm import load_road_graph
     graph = load_road_graph(download_region(region), store_names=False)
     return CCHRoadRouter(graph)
+
+
+def road_router(region: str, data_dir: str | None = None):
+    """A CCHRoadRouter for the region (built once per process, then cached).
+
+    With data_dir, load a prebuilt offline artifact (no network, no OSM parse,
+    no contraction-order computation). Otherwise download the OSM extract and
+    build from scratch.
+
+    The cache key is normalized so road_router(region) and
+    road_router(region, None) resolve to the same cached instance.
+    """
+    return _road_router_cached(region, data_dir)
+
+
+# Expose the underlying cache controls on the public function.
+road_router.cache_clear = _road_router_cached.cache_clear
+road_router.cache_info = _road_router_cached.cache_info
 
 
 def build_region(region: str, out_dir: str) -> str:
@@ -215,7 +227,7 @@ def drive(origin, dest, region: str, *, day: date | None = None,
     d = _coerce(dest)
     router = road_router(region, data_dir)
     g = router.graph
-    road = router.customize(day or date.today(), conditions)
+    road = router.customized(day or date.today(), conditions)
     path = road.route_index(_snap(router, o, region), _snap(router, d, region))
     if path is None:
         return DriveResult(drivable=False)
