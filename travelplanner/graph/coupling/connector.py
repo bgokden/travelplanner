@@ -49,7 +49,15 @@ def _ground_leg(distance_km: float, *, drive_kmh: float, walk_kmh: float,
 
 
 class GeometricConnector:
-    """Straight-line + speed model. Conditions are ignored (no seasonal roads)."""
+    """Straight-line + speed model. Conditions are ignored (no seasonal roads).
+
+    WARNING: this connector is NOT land-route-aware. It estimates ground access
+    from straight-line distance, so it will happily return a car/walk leg across
+    water or impassable terrain, and it cannot represent seasonal or conditional
+    road availability. For feasibility and seasonality (e.g. an island reachable
+    only by a summer ferry), use a road-backed connector (CCHConnector /
+    travelplanner.roads.region_connector) over a real road graph.
+    """
 
     def __init__(self, stops: dict[str, Stop], *, max_access_km: float = 50.0,
                  max_ground_km: float = 1500.0,

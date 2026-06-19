@@ -41,6 +41,7 @@ from travelplanner.roads import (
     build_region,
     download_region,
     drive,
+    drive_matrix,
     prefetch,
     region_connector,
     road_router,
@@ -73,6 +74,7 @@ __all__ = [
     "sample_trip",
     # street-accurate driving (on-demand OSM)
     "drive",
+    "drive_matrix",
     "DriveResult",
     "road_router",
     "region_connector",
