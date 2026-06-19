@@ -27,6 +27,15 @@ All notable changes to this project are documented here. The format is based on
   `ExpandedCustomized.route(from_key, to_key)` (mirroring the node-based
   `CustomizedRoad.route`), so a `CCHConnector` can be backed by the turn-aware
   router and stays router-agnostic.
+- `SplitConnector(access_connector, egress_connector, *, direct_connector=None)`:
+  a composite RoadConnector that resolves access in the origin's region and
+  egress in the destination's region, for door-to-door trips whose endpoints fall
+  in different road extracts (e.g. Zaandam -> Maastricht). `plan_trip(road=True)`
+  uses it automatically when no single region covers both endpoints and the trip
+  is online (a single `data_dir` cannot hold two regions, so an offline
+  cross-region trip falls back to geometric); each side is pre-filtered to its
+  endpoint's nearby stops and honours `turn_aware`. The cross-region pure-ground
+  drive spans no single graph, so `direct` is delegated to a geometric estimate.
 - Multimodal itinerary map (`viz.itinerary_map_html` / `save_itinerary_map`):
   render a `plan_trip` itinerary's legs as per-mode coloured segments (walk grey,
   car blue, train green, ferry teal, flight orange) on one self-contained Leaflet

@@ -10,6 +10,7 @@ from travelplanner.graph.coupling.connector import (
     CCHConnector,
     GeometricConnector,
     RoadConnector,
+    SplitConnector,
 )
 from travelplanner.graph.coupling.planner import plan
 
@@ -19,4 +20,5 @@ __all__ = [
     "RoadConnector",
     "GeometricConnector",
     "CCHConnector",
+    "SplitConnector",
 ]

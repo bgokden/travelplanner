@@ -18,7 +18,11 @@ from datetime import datetime
 
 from travelplanner.geo import haversine
 from travelplanner.models import Itinerary, Location
-from travelplanner.graph.coupling import GeometricConnector, RoadConnector
+from travelplanner.graph.coupling import (
+    GeometricConnector,
+    RoadConnector,
+    SplitConnector,
+)
 from travelplanner.graph.coupling.planner import plan
 from travelplanner.graph.query import Objective
 from travelplanner.graph.scheduled.model import Timetable
@@ -43,20 +47,50 @@ def _nearby_stops(timetable: Timetable, points, max_km: float) -> dict:
                    for p in points)}
 
 
+def _split_connector(origin: Location, dest: Location, timetable: Timetable,
+                     turn_aware):
+    """A SplitConnector with per-endpoint regions, or None if either endpoint is
+    not covered. Only used online (no data_dir): a single data_dir cannot hold
+    two regions, so an offline cross-region trip falls back to geometric.
+    """
+    from travelplanner.geofabrik import region_for
+
+    try:
+        acc_region = region_for(origin.lat, origin.lon)
+        egr_region = region_for(dest.lat, dest.lon)
+    except ValueError:
+        return None
+    margin = ROAD_ACCESS_KM + _ACCESS_MARGIN_KM
+    access = region_connector(acc_region.pbf_url,
+                              _nearby_stops(timetable, [origin], margin),
+                              turn_aware=turn_aware)
+    egress = region_connector(egr_region.pbf_url,
+                              _nearby_stops(timetable, [dest], margin),
+                              turn_aware=turn_aware)
+    # The cross-region drive spans no single graph; keep a geometric ground
+    # candidate so the frontier still has a direct option.
+    return SplitConnector(access, egress,
+                          direct_connector=GeometricConnector(timetable.stops))
+
+
 def _road_connector(origin: Location, dest: Location, timetable: Timetable,
                     region, data_dir, turn_aware):
-    """A road-backed connector when one region covers both endpoints, else None.
+    """A road-backed connector for the trip, or None to fall back to geometric.
 
-    Returns None (caller falls back to geometric) when the endpoints are
-    cross-border/across water -- `_auto_region` raises there, by design, and we
-    must not silently load a country-scale extract. turn_aware backs the
-    connector with the edge-expanded, turn-correct router.
+    When one region covers both endpoints, one region_connector backs the whole
+    trip. When they fall in different regions (`_auto_region` raises) and we are
+    online (no data_dir), a SplitConnector resolves access and egress in their
+    own regions. We never silently load a country-scale extract; an offline
+    cross-region trip returns None (geometric fallback). turn_aware backs each
+    road connector with the edge-expanded, turn-correct router.
     """
     coords = [(origin.lat, origin.lon), (dest.lat, dest.lon)]
     try:
         resolved = _auto_region(region, data_dir, coords)
     except ValueError:
-        return None
+        if data_dir is not None:
+            return None
+        return _split_connector(origin, dest, timetable, turn_aware)
     nearby = _nearby_stops(timetable, [origin, dest],
                            ROAD_ACCESS_KM + _ACCESS_MARGIN_KM)
     return region_connector(resolved, nearby, data_dir=data_dir,

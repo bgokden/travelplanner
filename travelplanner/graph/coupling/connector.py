@@ -104,6 +104,41 @@ class GeometricConnector:
         return self._leg_to(origin, dest)
 
 
+class SplitConnector:
+    """Composite RoadConnector with separate per-endpoint connectors.
+
+    For a trip whose endpoints fall in DIFFERENT road regions (no single
+    Geofabrik extract covers both, e.g. Zaandam -> Maastricht), access at the
+    origin is resolved by `access_connector` (the origin's region) and egress at
+    the destination by `egress_connector` (the destination's region). The
+    pure-ground `direct` candidate is delegated to an optional `direct_connector`
+    (e.g. a GeometricConnector): neither regional graph spans both endpoints, so a
+    road direct is undefined; without one, there is simply no ground candidate.
+    """
+
+    def __init__(self, access_connector: RoadConnector,
+                 egress_connector: RoadConnector, *,
+                 direct_connector: RoadConnector | None = None) -> None:
+        self._access = access_connector
+        self._egress = egress_connector
+        self._direct = direct_connector
+
+    def access(self, origin: Location, conditions: frozenset[str] = frozenset(),
+               *, day=None) -> dict[str, AccessLeg]:
+        return self._access.access(origin, conditions, day=day)
+
+    def egress(self, dest: Location, conditions: frozenset[str] = frozenset(),
+               *, day=None) -> dict[str, AccessLeg]:
+        return self._egress.egress(dest, conditions, day=day)
+
+    def direct(self, origin: Location, dest: Location,
+               conditions: frozenset[str] = frozenset(), *,
+               day=None) -> AccessLeg | None:
+        if self._direct is None:
+            return None
+        return self._direct.direct(origin, dest, conditions, day=day)
+
+
 class CCHConnector:
     """Road access/egress via the Phase 1 CCH engine.
 

@@ -4,11 +4,13 @@ from datetime import datetime
 
 import pytest
 
-from travelplanner.models import Itinerary, Mode
-from travelplanner.graph.coupling import GeometricConnector
+from travelplanner.models import Itinerary, LocationType, Mode
+from travelplanner.graph.coupling import GeometricConnector, SplitConnector
 from travelplanner.graph.query import Objective
+from travelplanner.graph.scheduled.model import Stop
 from travelplanner.samples import sample_timetable, sample_trip
 from travelplanner.trips import plan_trip
+from travelplanner import place
 
 
 def test_plan_trip_geometric_default():
@@ -68,16 +70,21 @@ def test_plan_trip_no_route_returns_empty():
     assert plan_trip(origin, dest, depart, tt, connector=blocked) == []
 
 
-def test_plan_trip_cross_border_falls_back_to_geometric(monkeypatch):
-    """road=True where no single region covers both endpoints degrades to the
-    geometric connector instead of raising."""
+def test_plan_trip_uncovered_endpoint_falls_back_to_geometric(monkeypatch):
+    """road=True where no single region covers both AND an endpoint is not
+    covered at all (across water, e.g. Amsterdam->London) cannot split either, so
+    it degrades to the geometric connector instead of raising."""
     origin, dest, depart = sample_trip()
     tt = sample_timetable()
 
-    def _raise(region, data_dir, coords):
+    def _no_single(region, data_dir, coords):
         raise ValueError("cross-border: no single region covers both points")
 
-    monkeypatch.setattr("travelplanner.trips._auto_region", _raise)
+    def _uncovered(lat, lon):
+        raise ValueError("no region covers this point")
+
+    monkeypatch.setattr("travelplanner.trips._auto_region", _no_single)
+    monkeypatch.setattr("travelplanner.geofabrik.region_for", _uncovered)
     result = plan_trip(origin, dest, depart, tt, road=True)
     assert result == plan_trip(origin, dest, depart, tt)   # same as geometric
 
@@ -87,6 +94,70 @@ def test_plan_trip_bad_coordinate_raises():
     tt = sample_timetable()
     with pytest.raises(ValueError):
         plan_trip("95.0,0.0", (45.0, 9.01), depart, tt)
+
+
+def test_split_connector_delegates_per_endpoint():
+    """access uses the origin-side connector, egress the destination-side one;
+    direct is the optional ground fallback (None without it)."""
+    west = {"W": Stop("W", "West", 47.0, 7.0)}
+    east = {"E": Stop("E", "East", 45.0, 9.0)}
+    acc = GeometricConnector(west, max_access_km=50.0)
+    egr = GeometricConnector(east, max_access_km=50.0)
+    origin = place("o", LocationType.HOTEL, 47.0, 7.01)
+    dest = place("d", LocationType.HOTEL, 45.0, 9.01)
+
+    sc = SplitConnector(acc, egr)
+    assert set(sc.access(origin)) == {"W"}      # origin region only
+    assert set(sc.egress(dest)) == {"E"}        # destination region only
+    assert sc.direct(origin, dest) is None      # no ground candidate without one
+
+    sc2 = SplitConnector(acc, egr,
+                         direct_connector=GeometricConnector({}, max_ground_km=1e5))
+    assert sc2.direct(origin, dest) is not None
+
+
+def test_plan_trip_inter_region_builds_split(monkeypatch):
+    """road=True across two regions (single-region resolution raises) builds a
+    SplitConnector online instead of falling back to geometric."""
+    origin, dest, depart = sample_trip()        # ~(47,7) -> (45,9)
+    tt = sample_timetable()
+    built = []
+
+    def _no_single(region, data_dir, coords):
+        raise ValueError("cross-region")
+
+    class _Region:
+        def __init__(self, url):
+            self.pbf_url = url
+
+    def _region_for(lat, lon):
+        return _Region("west" if lon < 8 else "east")
+
+    def _region_connector(region, stops, **kwargs):
+        built.append(region)
+        return GeometricConnector(stops)
+
+    monkeypatch.setattr("travelplanner.trips._auto_region", _no_single)
+    monkeypatch.setattr("travelplanner.geofabrik.region_for", _region_for)
+    monkeypatch.setattr("travelplanner.trips.region_connector", _region_connector)
+
+    result = plan_trip(origin, dest, depart, tt, road=True)
+    assert result
+    assert set(built) == {"west", "east"}       # one connector per endpoint
+
+
+def test_plan_trip_inter_region_offline_falls_back(monkeypatch):
+    """A single data_dir cannot hold two regions, so an offline cross-region trip
+    falls back to geometric rather than splitting."""
+    origin, dest, depart = sample_trip()
+    tt = sample_timetable()
+
+    def _no_single(region, data_dir, coords):
+        raise ValueError("cross-region")
+
+    monkeypatch.setattr("travelplanner.trips._auto_region", _no_single)
+    result = plan_trip(origin, dest, depart, tt, road=True, data_dir="/some/dir")
+    assert result == plan_trip(origin, dest, depart, tt)     # geometric
 
 
 def test_plan_trip_turn_aware_requires_road():

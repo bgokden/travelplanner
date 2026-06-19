@@ -37,6 +37,7 @@ from travelplanner.graph.coupling import (
     CCHConnector,
     GeometricConnector,
     RoadConnector,
+    SplitConnector,
     plan,
 )
 from travelplanner.trips import plan_trip
@@ -95,6 +96,7 @@ __all__ = [
     "RoadConnector",
     "GeometricConnector",
     "CCHConnector",
+    "SplitConnector",
     "sample_timetable",
     "sample_trip",
     # street-accurate driving (on-demand OSM)
