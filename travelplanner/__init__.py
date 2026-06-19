@@ -45,8 +45,10 @@ from travelplanner.roads import (
     REGIONS,
     build_region,
     download_region,
+    Route,
     drive,
     drive_matrix,
+    drive_route,
     prefetch,
     region_connector,
     road_router,
@@ -62,6 +64,7 @@ from travelplanner.speed import (
     average_model,
     free_flow_model,
     get_speed_model,
+    holiday_calendar,
     reset_speed_model,
     set_speed_model,
     time_of_day_model,
@@ -95,6 +98,8 @@ __all__ = [
     # street-accurate driving (on-demand OSM)
     "drive",
     "drive_matrix",
+    "drive_route",
+    "Route",
     "DriveResult",
     "road_router",
     "region_connector",
@@ -119,6 +124,7 @@ __all__ = [
     "free_flow_model",
     "average_model",
     "time_of_day_model",
+    "holiday_calendar",
 ]
 
 __version__ = "0.1.0"

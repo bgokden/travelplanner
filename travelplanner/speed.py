@@ -71,13 +71,28 @@ def _time_of_day_factor(highway: Optional[str], dt: datetime, *,
     return 1.0
 
 
+def _is_holiday(calendar, day) -> bool:
+    fn = getattr(calendar, "is_holiday", None)
+    return bool(fn(day)) if fn is not None else False
+
+
+def _school_in_session(calendar, day) -> bool:
+    fn = getattr(calendar, "school_in_session", None)
+    return bool(fn(day)) if fn is not None else True
+
+
 def time_of_day_model(base: Optional[SpeedModel] = None, *,
                       peak_urban: float = 1.45, peak_highway: float = 1.20,
-                      night: float = 0.95) -> SpeedModel:
+                      night: float = 0.95, calendar=None,
+                      school_holiday_relief: float = 0.5) -> SpeedModel:
     """Average (or `base`) scaled by a heuristic hour/weekday congestion curve.
 
-    The combined multiplier is clamped to >= 1.0 so a quiet hour never beats the
-    free-flow speed limit. With no depart_at it falls back to `base`.
+    With an optional `calendar` (see holiday_calendar) the curve also reacts to
+    the date: a public holiday collapses the commute (no rush-hour peak), and a
+    school holiday on a workday lightens the peak by `school_holiday_relief`
+    (0 = no relief, 1 = peak removed). The combined multiplier is clamped to
+    >= 1.0 so a quiet hour never beats the free-flow speed limit. With no
+    depart_at it falls back to `base`.
     """
     base_model = base if base is not None else average_model()
 
@@ -85,10 +100,70 @@ def time_of_day_model(base: Optional[SpeedModel] = None, *,
         b = base_model(highway, depart_at)
         if depart_at is None:
             return b
+        day = depart_at.date()
+        if calendar is not None and _is_holiday(calendar, day):
+            hour = depart_at.hour
+            return max(1.0, b * (night if hour >= 22 or hour <= 5 else 1.0))
         factor = _time_of_day_factor(highway, depart_at, peak_urban=peak_urban,
                                      peak_highway=peak_highway, night=night)
+        if (factor > 1.0 and calendar is not None
+                and not _school_in_session(calendar, day)):
+            factor = 1.0 + (factor - 1.0) * school_holiday_relief
         return max(1.0, b * factor)
     return model
+
+
+def holiday_calendar(country: str, subdiv: Optional[str] = None, *,
+                     school_holidays=None, years=None,
+                     use_package_school: bool = True):
+    """Date calendar backed by the `holidays` package (optional `calendar` extra).
+
+    Public holidays come from `holidays.country_holidays(country, subdiv=...)`.
+
+    School holidays are resolved in priority order:
+    1. an explicit `school_holidays` -- an iterable of (start, end) inclusive
+       date ranges, or a callable `date -> bool` (True when school is OUT);
+    2. else, if `use_package_school`, the holidays package's SCHOOL category for
+       this country/subdivision when it has data (e.g. Germany per Bundesland --
+       pass subdiv="BY"; coverage elsewhere is sparse);
+    3. else school is assumed always in session.
+
+    The holidays package's school coverage is uneven (strong for Germany, absent
+    for e.g. NL/FR/GB), so supply ranges for those, or use an external source.
+    Pass the result as `calendar=` to time_of_day_model.
+    """
+    import holidays as _holidays  # optional dependency ('calendar' extra)
+
+    public = _holidays.country_holidays(country, subdiv=subdiv, years=years)
+
+    if callable(school_holidays):
+        school_out = school_holidays
+    elif school_holidays is not None:
+        ranges = list(school_holidays)
+
+        def school_out(day) -> bool:
+            return any(start <= day <= end for start, end in ranges)
+    elif use_package_school:
+        try:
+            school = _holidays.country_holidays(
+                country, subdiv=subdiv, years=years, categories=("school",))
+        except (ValueError, KeyError, NotImplementedError):
+            school = None
+
+        def school_out(day) -> bool:
+            return school is not None and day in school
+    else:
+        def school_out(day) -> bool:
+            return False
+
+    class _Calendar:
+        def is_holiday(self, day) -> bool:
+            return day in public
+
+        def school_in_session(self, day) -> bool:
+            return day.weekday() < 5 and day not in public and not school_out(day)
+
+    return _Calendar()
 
 
 # Default: time-of-day aware. It decides automatically -- with no departure time

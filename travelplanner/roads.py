@@ -188,6 +188,22 @@ road_router.cache_clear = _road_router_cached.cache_clear
 road_router.cache_info = _road_router_cached.cache_info
 
 
+@lru_cache(maxsize=2)
+def _expanded_router_cached(region: str, data_dir: str | None):
+    from travelplanner.graph.road.expanded import ExpandedCCHRoadRouter
+    from travelplanner.graph.road.turns import build_expanded_graph
+
+    base = _road_router_cached(region, data_dir)
+    return ExpandedCCHRoadRouter(build_expanded_graph(base.graph))
+
+
+def _router_for(region, data_dir, turn_aware):
+    """The node-based router, or the turn-aware (edge-expanded) one if requested."""
+    if turn_aware:
+        return _expanded_router_cached(region, data_dir)
+    return road_router(region, data_dir)
+
+
 def build_region(region: str, out_dir: str) -> str:
     """Build an offline road artifact for `region` into `out_dir`; return it.
 
@@ -279,11 +295,60 @@ def _auto_region(region, data_dir, coords):
     return region_for_points(coords).pbf_url
 
 
+@dataclass(frozen=True)
+class Route(DriveResult):
+    """A DriveResult plus the routed geometry as (lat, lon) points along the path."""
+    geometry: tuple = ()
+
+    def to_geojson(self) -> dict:
+        """A GeoJSON Feature (LineString, [lon, lat] order) for map rendering."""
+        return {
+            "type": "Feature",
+            "properties": {"drivable": self.drivable,
+                           "duration_s": (self.duration.total_seconds()
+                                          if self.duration is not None else None),
+                           "distance_km": self.distance_km},
+            "geometry": {"type": "LineString",
+                         "coordinates": [[lon, lat] for lat, lon in self.geometry]},
+        }
+
+
+def drive_route(origin, dest, region: str | None = None, *,
+                day: date | None = None, depart_at: datetime | None = None,
+                conditions: frozenset = frozenset(),
+                data_dir: str | None = None, geocoder=None,
+                speed_model=None, turn_aware: bool = False) -> Route:
+    """Like drive(), but also returns the routed path geometry (see Route).
+
+    Use route.to_geojson() or travelplanner.viz.save_route_map(route, path).
+    turn_aware=True routes over the edge-expanded, turn-aware graph.
+    """
+    o = _coerce(origin, geocoder=geocoder)
+    d = _coerce(dest, geocoder=geocoder)
+    region = _auto_region(region, data_dir, [(o.lat, o.lon), (d.lat, d.lon)])
+    router = _router_for(region, data_dir, turn_aware)
+    g = router.graph
+    when_day = (depart_at.date() if depart_at is not None else day) or date.today()
+    road = router.customized(when_day, conditions, depart_at=depart_at,
+                             speed_model=speed_model)
+    oi, di = _snap(router, o, region), _snap(router, d, region)
+    if oi == di:
+        pt = (g.latitude[oi], g.longitude[oi])
+        return Route(True, timedelta(0), 0.0, geometry=(pt,))
+    path = road.route_index(oi, di)
+    if path is None:
+        return Route(False)
+    geometry = tuple((g.latitude[i], g.longitude[i]) for i in path.node_indices)
+    return Route(True, timedelta(seconds=path.seconds),
+                 round(_path_distance_km(g, path.node_indices), 1),
+                 geometry=geometry)
+
+
 def drive(origin, dest, region: str | None = None, *, day: date | None = None,
           depart_at: datetime | None = None,
           conditions: frozenset = frozenset(),
           data_dir: str | None = None, geocoder=None,
-          speed_model=None) -> DriveResult:
+          speed_model=None, turn_aware: bool = False) -> DriveResult:
     """Street-accurate driving estimate, or drivable=False if no road connects.
 
     origin/dest may be a Location, (lat, lon), "lat,lon", or a place name
@@ -292,13 +357,14 @@ def drive(origin, dest, region: str | None = None, *, day: date | None = None,
     endpoints (raises for a cross-border trip no single extract covers). Times
     use the active speed model, which decides automatically: average by default,
     or time-of-day (rush-hour) effects when you pass depart_at; pass speed_model
-    to override (e.g. free_flow_model). With data_dir, route over a prebuilt
-    offline artifact (see build_region).
+    to override (e.g. free_flow_model). turn_aware=True routes over the
+    edge-expanded turn-aware graph. With data_dir, route over a prebuilt offline
+    artifact (see build_region).
     """
     o = _coerce(origin, geocoder=geocoder)
     d = _coerce(dest, geocoder=geocoder)
     region = _auto_region(region, data_dir, [(o.lat, o.lon), (d.lat, d.lon)])
-    router = road_router(region, data_dir)
+    router = _router_for(region, data_dir, turn_aware)
     when_day = (depart_at.date() if depart_at is not None else day) or date.today()
     road = router.customized(when_day, conditions, depart_at=depart_at,
                              speed_model=speed_model)

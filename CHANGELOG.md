@@ -35,6 +35,11 @@ All notable changes to this project are documented here. The format is based on
   `drive_matrix` take `depart_at=` and `speed_model=`. Applied at customization
   per interned highway class, so one artifact serves any profile/time with no
   rebuild. (Heuristic typical-day, not live traffic; pluggable for real data.)
+- Calendar-aware speed (`holiday_calendar`, optional `calendar` extra via the
+  holidays package): a public holiday collapses the rush-hour peak and a school
+  holiday lightens it. School breaks come from explicit ranges, or automatically
+  from the holidays package's SCHOOL category where it has data (e.g. Germany per
+  Bundesland; coverage elsewhere is sparse, so supply ranges there).
 - Pluggable geocoding (`travelplanner.geocoding`): a geocoder is a callable
   `(name) -> (lat, lon) | None`; compose with `chain`, `cached` (JSON disk cache),
   and an opt-in online `nominatim_geocoder`. `set_geocoder`/`reset_geocoder` set

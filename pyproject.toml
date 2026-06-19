@@ -30,6 +30,8 @@ dev = ["pytest>=7.0"]
 # Road layer: customizable contraction hierarchies + OSM ingestion.
 # Note: routingkit-cch builds from source (needs a C++17 compiler + OpenMP).
 road = ["routingkit-cch>=0.1.3", "osmium>=4.0"]
+# Calendar-aware speed models (public holidays via the holidays package).
+calendar = ["holidays>=0.40"]
 
 [project.urls]
 Homepage = "https://github.com/bgokden/travelplanner"

@@ -117,6 +117,69 @@ def test_routing_peak_slower_than_offpeak():
     assert peak > off
 
 
+class _StubCalendar:
+    """Minimal calendar: one holiday date, school out for a date range."""
+    def __init__(self, holiday=None, school_out_range=None):
+        self.holiday = holiday
+        self.school_out_range = school_out_range
+
+    def is_holiday(self, day):
+        return day == self.holiday
+
+    def school_in_session(self, day):
+        if day.weekday() >= 5 or day == self.holiday:
+            return False
+        if self.school_out_range:
+            a, b = self.school_out_range
+            return not (a <= day <= b)
+        return True
+
+
+def test_public_holiday_removes_peak():
+    peak_dt = _weekday_at(8)
+    cal = _StubCalendar(holiday=peak_dt.date())
+    plain = time_of_day_model()
+    holiday = time_of_day_model(calendar=cal)
+    # normally rush hour is slow; on a public holiday the peak is gone
+    assert plain("residential", peak_dt) > 1.82
+    assert holiday("residential", peak_dt) == 1.82
+
+
+def test_school_holiday_relieves_peak():
+    peak_dt = _weekday_at(8)
+    cal = _StubCalendar(school_out_range=(peak_dt.date(), peak_dt.date()))
+    full_peak = time_of_day_model()("residential", peak_dt)
+    relieved = time_of_day_model(calendar=cal,
+                                 school_holiday_relief=0.5)("residential", peak_dt)
+    assert 1.82 < relieved < full_peak     # lighter than term-time, still a peak
+
+
+def test_holiday_calendar_package():
+    pytest.importorskip("holidays")
+    from datetime import date
+    from travelplanner.speed import holiday_calendar
+    cal = holiday_calendar("NL", school_holidays=[(date(2026, 7, 6), date(2026, 8, 16))])
+    assert cal.is_holiday(date(2026, 12, 25))           # Christmas
+    assert not cal.is_holiday(date(2026, 6, 15))
+    assert cal.school_in_session(date(2026, 6, 15))     # a normal Monday
+    assert not cal.school_in_session(date(2026, 7, 20))  # summer break
+    assert not cal.school_in_session(date(2026, 12, 25))  # holiday -> not in session
+
+
+def test_holiday_calendar_package_school_germany():
+    pytest.importorskip("holidays")
+    from datetime import date
+    from travelplanner.speed import holiday_calendar
+    # Germany exposes school holidays per Bundesland in the holidays package;
+    # no user ranges needed.
+    cal = holiday_calendar("DE", subdiv="BY")
+    in_session = [d for d in (date(2026, 3, 9), date(2026, 3, 10), date(2026, 3, 11))
+                  if cal.school_in_session(d)]
+    out = [d for d in (date(2026, 1, 1), date(2026, 8, 5))
+           if not cal.school_in_session(d)]
+    assert in_session and out             # some days in session, some on break
+
+
 def test_unclassed_graph_unaffected_by_average():
     # roads added without a highway class keep their explicit seconds
     b = RoadGraphBuilder(store_names=False)
