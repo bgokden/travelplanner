@@ -31,6 +31,8 @@ class RoadGraph:
     validity_table: tuple[Validity, ...]
     arc_name: array | None       # int index into name_table, or None
     name_table: tuple[str, ...]
+    arc_class: array | None = None   # int index into class_table (OSM highway class)
+    class_table: tuple[str, ...] = ()
     _index_cache: dict | None = field(default=None, compare=False, repr=False)
 
     @property
@@ -74,6 +76,19 @@ class RoadGraphBuilder:
         self._arc_name = array("i") if store_names else None
         self._name_table: list[str] = []
         self._name_map: dict[str, int] = {}
+        # Highway class is interned per arc (tiny table) so customization can
+        # apply a per-class speed multiplier without storing strings per arc.
+        self._arc_class = array("i")
+        self._class_table: list[str] = []
+        self._class_map: dict[str, int] = {}
+
+    def _intern_class(self, highway: str) -> int:
+        idx = self._class_map.get(highway)
+        if idx is None:
+            idx = len(self._class_table)
+            self._class_table.append(highway)
+            self._class_map[highway] = idx
+        return idx
 
     def _intern_validity(self, validity: Validity) -> int:
         idx = self._validity_map.get(validity)
@@ -103,7 +118,8 @@ class RoadGraphBuilder:
         return idx
 
     def add_arc(self, from_key: str, to_key: str, seconds: float,
-                validity: Validity = ALWAYS, name: str = "") -> int:
+                validity: Validity = ALWAYS, name: str = "",
+                highway: str = "") -> int:
         if from_key not in self._index:
             raise KeyError(f"Unknown from_node {from_key!r}; add_node first")
         if to_key not in self._index:
@@ -113,16 +129,17 @@ class RoadGraphBuilder:
         self._head.append(self._index[to_key])
         self._secs.append(int(round(seconds)))
         self._arc_validity.append(self._intern_validity(validity))
+        self._arc_class.append(self._intern_class(highway))
         if self._arc_name is not None:
             self._arc_name.append(self._intern_name(name))
         return arc
 
     def add_road(self, a_key: str, b_key: str, seconds: float,
                  validity: Validity = ALWAYS, name: str = "",
-                 bidirectional: bool = True) -> list[int]:
-        arcs = [self.add_arc(a_key, b_key, seconds, validity, name)]
+                 bidirectional: bool = True, highway: str = "") -> list[int]:
+        arcs = [self.add_arc(a_key, b_key, seconds, validity, name, highway)]
         if bidirectional:
-            arcs.append(self.add_arc(b_key, a_key, seconds, validity, name))
+            arcs.append(self.add_arc(b_key, a_key, seconds, validity, name, highway))
         return arcs
 
     def build(self) -> RoadGraph:
@@ -143,4 +160,6 @@ class RoadGraphBuilder:
             validity_table=tuple(self._validity_table),
             arc_name=self._arc_name,
             name_table=tuple(self._name_table),
+            arc_class=self._arc_class,
+            class_table=tuple(self._class_table),
         )

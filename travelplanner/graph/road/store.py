@@ -23,12 +23,13 @@ from datetime import date
 from travelplanner.graph.road.model import RoadGraph
 from travelplanner.graph.validity import ServiceCalendar, Validity
 
-FORMAT_VERSION = 1
+FORMAT_VERSION = 2
 _META = "meta.json"
 _NODE_KEYS_TXT = "node_keys.txt"
 _NODE_KEYS_BIN = "node_keys.bin"
 _ORDER = "order.bin"
 _ARC_NAME = "arc_name.bin"
+_ARC_CLASS = "arc_class.bin"
 
 
 def _calendar_to_json(cal: ServiceCalendar | None):
@@ -96,16 +97,19 @@ def save_road_artifact(graph: RoadGraph, order, out_dir: str) -> str:
     # line-delimited text file (which forbids newlines in a key).
     int_keys = isinstance(graph.node_keys, array)
     has_names = graph.arc_name is not None
+    has_class = graph.arc_class is not None
     meta = {
         "format_version": FORMAT_VERSION,
         "node_count": graph.node_count,
         "arc_count": graph.arc_count,
         "has_names": has_names,
+        "has_class": has_class,
         "int_node_keys": int_keys,
         "itemsize_i": array("i").itemsize,
         "itemsize_q": array("q").itemsize,
         "validity_table": [_validity_to_json(v) for v in graph.validity_table],
         "name_table": list(graph.name_table),
+        "class_table": list(graph.class_table),
     }
     with open(os.path.join(out_dir, _META), "w") as f:
         json.dump(meta, f)
@@ -130,6 +134,8 @@ def save_road_artifact(graph: RoadGraph, order, out_dir: str) -> str:
     _write_array(os.path.join(out_dir, "arc_validity.bin"), "i", graph.arc_validity)
     if has_names:
         _write_array(os.path.join(out_dir, _ARC_NAME), "i", graph.arc_name)
+    if has_class:
+        _write_array(os.path.join(out_dir, _ARC_CLASS), "i", graph.arc_class)
     _write_array(os.path.join(out_dir, _ORDER), "i", order)
     return out_dir
 
@@ -169,6 +175,8 @@ def load_road_artifact(out_dir: str) -> tuple[RoadGraph, list[int]]:
     arc_validity = _read_array(os.path.join(out_dir, "arc_validity.bin"), "i", arc_count)
     arc_name = (_read_array(os.path.join(out_dir, _ARC_NAME), "i", arc_count)
                 if meta["has_names"] else None)
+    arc_class = (_read_array(os.path.join(out_dir, _ARC_CLASS), "i", arc_count)
+                 if meta.get("has_class") else None)
     order = list(_read_array(os.path.join(out_dir, _ORDER), "i", node_count))
 
     graph = RoadGraph(
@@ -182,5 +190,7 @@ def load_road_artifact(out_dir: str) -> tuple[RoadGraph, list[int]]:
         validity_table=tuple(_validity_from_json(v) for v in meta["validity_table"]),
         arc_name=arc_name,
         name_table=tuple(meta["name_table"]),
+        arc_class=arc_class,
+        class_table=tuple(meta.get("class_table", ())),
     )
     return graph, order

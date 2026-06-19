@@ -10,7 +10,12 @@ a GTFS feed) and a RoadConnector. A bundled `sample_timetable()` lets you run
 immediately.
 """
 
-from travelplanner.catalog import resolve_city
+from travelplanner.geocoding import (
+    geocode,
+    reset_geocoder,
+    resolve_city,
+    set_geocoder,
+)
 from travelplanner.models import (
     CostLevel,
     Itinerary,
@@ -47,6 +52,14 @@ from travelplanner.roads import (
     road_router,
 )
 from travelplanner.geofabrik import Region, catalog, list_regions
+from travelplanner.speed import (
+    average_model,
+    free_flow_model,
+    get_speed_model,
+    reset_speed_model,
+    set_speed_model,
+    time_of_day_model,
+)
 
 __all__ = [
     "plan",
@@ -87,6 +100,17 @@ __all__ = [
     "list_regions",
     "catalog",
     "Region",
+    # geocoding (name -> lat/lon); composition helpers in travelplanner.geocoding
+    "geocode",
+    "set_geocoder",
+    "reset_geocoder",
+    # driving speed models (free-flow / average / time-of-day)
+    "set_speed_model",
+    "get_speed_model",
+    "reset_speed_model",
+    "free_flow_model",
+    "average_model",
+    "time_of_day_model",
 ]
 
 __version__ = "0.1.0"
@@ -97,7 +121,7 @@ def place(name: str, type: LocationType, lat: float, lon: float) -> Location:
     return Location(name=name, type=type, lat=lat, lon=lon)
 
 
-def city(name: str) -> Location:
-    """Build a CITY Location resolved from the bundled city table."""
-    lat, lon = resolve_city(name)
+def city(name: str, *, geocoder=None) -> Location:
+    """Build a CITY Location by resolving a name via the active/given geocoder."""
+    lat, lon = resolve_city(name, geocoder=geocoder)
     return Location(name=name, type=LocationType.CITY, lat=lat, lon=lon)

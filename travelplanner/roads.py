@@ -35,10 +35,10 @@ metric per (day, conditions), so sequential calls are fast.
 import os
 import urllib.request
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from functools import lru_cache
 
-from travelplanner.catalog import resolve_city
+from travelplanner.geocoding import resolve_city
 from travelplanner.geo import haversine
 from travelplanner.models import Location, LocationType
 
@@ -213,7 +213,7 @@ def region_connector(region: str, stops, *, data_dir: str | None = None, **kwarg
     return CCHConnector(road_router(region, data_dir), stops, **kwargs)
 
 
-def _coerce(point) -> Location:
+def _coerce(point, *, geocoder=None) -> Location:
     if isinstance(point, Location):
         return point
     if isinstance(point, (tuple, list)) and len(point) == 2:
@@ -228,9 +228,9 @@ def _coerce(point) -> Location:
             lat = None
         if lat is not None:
             # Parses as a coordinate; Location validates the range (and raises a
-            # clear out-of-range error rather than falling back to a city lookup).
+            # clear out-of-range error rather than falling back to a name lookup).
             return Location(text, LocationType.LANDMARK, lat, lon)
-    lat, lon = resolve_city(text)
+    lat, lon = resolve_city(text, geocoder=geocoder)
     return Location(text, LocationType.CITY, lat, lon)
 
 
@@ -269,23 +269,33 @@ def _drive_between(road, graph, from_idx: int, to_idx: int) -> DriveResult:
 
 
 def drive(origin, dest, region: str, *, day: date | None = None,
+          depart_at: datetime | None = None,
           conditions: frozenset = frozenset(),
-          data_dir: str | None = None) -> DriveResult:
+          data_dir: str | None = None, geocoder=None,
+          speed_model=None) -> DriveResult:
     """Street-accurate driving estimate, or drivable=False if no road connects.
 
-    With data_dir, route over a prebuilt offline artifact (see build_region)
-    rather than downloading and building the region.
+    origin/dest may be a Location, (lat, lon), "lat,lon", or a place name
+    (resolved via the active or supplied geocoder). Times use the active speed
+    model, which decides automatically: average conditions by default, or
+    time-of-day (rush-hour) effects when you pass depart_at. Pass speed_model to
+    override (e.g. free_flow_model). With data_dir, route over a prebuilt offline
+    artifact (see build_region).
     """
     router = road_router(region, data_dir)
-    road = router.customized(day or date.today(), conditions)
+    when_day = (depart_at.date() if depart_at is not None else day) or date.today()
+    road = router.customized(when_day, conditions, depart_at=depart_at,
+                             speed_model=speed_model)
     return _drive_between(road, router.graph,
-                          _snap(router, _coerce(origin), region),
-                          _snap(router, _coerce(dest), region))
+                          _snap(router, _coerce(origin, geocoder=geocoder), region),
+                          _snap(router, _coerce(dest, geocoder=geocoder), region))
 
 
 def drive_matrix(points, region: str, *, dests=None, day: date | None = None,
+                 depart_at: datetime | None = None,
                  conditions: frozenset = frozenset(),
-                 data_dir: str | None = None) -> list[list[DriveResult]]:
+                 data_dir: str | None = None, geocoder=None,
+                 speed_model=None) -> list[list[DriveResult]]:
     """Driving results for every origin x destination pair.
 
     Reuses one customized road metric and snaps each point once, so it is far
@@ -297,9 +307,11 @@ def drive_matrix(points, region: str, *, dests=None, day: date | None = None,
     """
     router = road_router(region, data_dir)
     g = router.graph
-    road = router.customized(day or date.today(), conditions)
-    origin_idx = [_snap(router, _coerce(p), region) for p in points]
+    when_day = (depart_at.date() if depart_at is not None else day) or date.today()
+    road = router.customized(when_day, conditions, depart_at=depart_at,
+                             speed_model=speed_model)
+    origin_idx = [_snap(router, _coerce(p, geocoder=geocoder), region) for p in points]
     dest_idx = (origin_idx if dests is None
-                else [_snap(router, _coerce(p), region) for p in dests])
+                else [_snap(router, _coerce(p, geocoder=geocoder), region) for p in dests])
     return [[_drive_between(road, g, oi, di) for di in dest_idx]
             for oi in origin_idx]

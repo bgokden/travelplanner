@@ -21,6 +21,21 @@ All notable changes to this project are documented here. The format is based on
   `Location`/`DriveResult`, plus `itinerary_records`/`leg_records` for pandas;
   `Itinerary.num_transfers` and `total_minutes`.
 - `bench/api_smoke.py`: self-contained smoke + latency-budget check for CI.
+- Dynamic speed models (`travelplanner.speed`): driving times now use a
+  configurable speed model instead of raw free-flow speed limits. A model maps
+  `(highway_class, depart_at) -> time multiplier`; `average_model` (the new
+  default) reflects typical conditions, `time_of_day_model` adds a rush-hour /
+  weekday congestion curve, and `free_flow_model` is the opt-in best case.
+  `set_speed_model`/`reset_speed_model` set the active default; `drive`/
+  `drive_matrix` take `depart_at=` and `speed_model=`. Applied at customization
+  per interned highway class, so one artifact serves any profile/time with no
+  rebuild. (Heuristic typical-day, not live traffic; pluggable for real data.)
+- Pluggable geocoding (`travelplanner.geocoding`): a geocoder is a callable
+  `(name) -> (lat, lon) | None`; compose with `chain`, `cached` (JSON disk cache),
+  and an opt-in online `nominatim_geocoder`. `set_geocoder`/`reset_geocoder` set
+  the active one (default: bundled table, offline); `city()`/`drive()`/
+  `drive_matrix()` take a per-call `geocoder=`. Pre-warm the cache at build time to
+  resolve names offline at runtime.
 
 ### Changed
 - `drive()` reuses a cached customized road metric (`CCHRoadRouter.customized`)

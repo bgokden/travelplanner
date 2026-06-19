@@ -15,12 +15,6 @@ def _load_cities() -> dict[str, tuple[float, float]]:
             for row in reader}
 
 
-def resolve_city(name: str) -> tuple[float, float]:
-    """Look up coordinates for a known city name. Raises if unknown."""
-    coords = _load_cities().get(name.strip().lower())
-    if coords is None:
-        raise ValueError(
-            f"Unknown city '{name}'. Provide lat/lon explicitly, "
-            f"or use one of the bundled cities."
-        )
-    return coords
+def lookup_city(name: str) -> tuple[float, float] | None:
+    """Coordinates for a bundled city name, or None if it is not in the table."""
+    return _load_cities().get(name.strip().lower())

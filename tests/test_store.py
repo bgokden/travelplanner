@@ -141,6 +141,20 @@ def test_integer_keys_roundtrip_binary(tmp_path):
         assert h.index(k) == i
 
 
+def test_arc_class_roundtrip(tmp_path):
+    b = RoadGraphBuilder(store_names=False)
+    for k, lon in [(1, 9.50), (2, 9.52), (3, 9.55)]:
+        b.add_node(k, 47.10, lon)
+    b.add_road(1, 2, 100, highway="motorway")
+    b.add_road(2, 3, 100, highway="residential")
+    g = b.build()
+    assert "motorway" in g.class_table and "residential" in g.class_table
+    save_road_artifact(g, CCHRoadRouter(g).order, str(tmp_path))
+    h, _ = load_road_artifact(str(tmp_path))
+    assert h.class_table == g.class_table
+    assert list(h.arc_class) == list(g.arc_class)
+
+
 def test_string_keys_stay_text(tmp_path):
     g = _graph(store_names=True)
     assert isinstance(g.node_keys, list)

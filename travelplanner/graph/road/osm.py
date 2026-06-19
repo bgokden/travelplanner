@@ -122,9 +122,9 @@ def load_road_graph(pbf_path: str,
                 dist_km = haversine(alat, alon, blat, blon)
                 seconds = dist_km / speed * 3600.0
                 if direction >= 0:
-                    builder.add_arc(ka, kb, seconds, validity, name)
+                    builder.add_arc(ka, kb, seconds, validity, name, highway)
                 if direction <= 0:
-                    builder.add_arc(kb, ka, seconds, validity, name)
+                    builder.add_arc(kb, ka, seconds, validity, name, highway)
 
     _Handler().apply_file(pbf_path, locations=True)
     return builder.build()

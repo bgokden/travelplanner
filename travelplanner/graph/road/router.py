@@ -65,41 +65,62 @@ class CCHRoadRouter:
                                              self.graph.longitude)
         return self._node_grid
 
-    def _weights_for(self, day: date, conditions: frozenset[str]) -> list[int]:
-        # Evaluate each distinct validity once, then map arcs by their interned
-        # index (cheap at country scale where the table is tiny).
+    def _class_multipliers(self, depart_at, speed_model):
+        """Per-class time multiplier for the active/given speed model (or None)."""
+        table = self.graph.class_table
+        if not table or self.graph.arc_class is None:
+            return None
+        from travelplanner.speed import get_speed_model
+        model = speed_model or get_speed_model()
+        return [model(cls or None, depart_at) for cls in table]
+
+    def _weights_for(self, day: date, conditions: frozenset[str],
+                     class_mult) -> list[int]:
+        # Evaluate each distinct validity (and class multiplier) once, then map
+        # arcs by their interned index (cheap; the tables are tiny).
         active = [v.is_active(day, conditions)
                   for v in self.graph.validity_table]
         base = self.graph.base_seconds
         vidx = self.graph.arc_validity
-        return [base[i] if active[vidx[i]] else INF for i in range(len(base))]
+        cidx = self.graph.arc_class
+        if class_mult is None or cidx is None:
+            return [base[i] if active[vidx[i]] else INF for i in range(len(base))]
+        return [round(base[i] * class_mult[cidx[i]]) if active[vidx[i]] else INF
+                for i in range(len(base))]
 
-    def customize(self, day: date,
-                  conditions: frozenset[str] = frozenset()) -> "CustomizedRoad":
+    def customize(self, day: date, conditions: frozenset[str] = frozenset(), *,
+                  depart_at=None, speed_model=None) -> "CustomizedRoad":
         """Phase 2: build a fresh queryable metric for a day and conditions.
 
-        Each call rebuilds the metric (~milliseconds at country scale). Use this
-        when you intend to mutate the result (update_arcs/close_named/open_named);
-        for repeated read-only queries on the same day/conditions, prefer
-        customized(), which caches and reuses the metric.
+        The speed model (active default: average; pass speed_model to override)
+        scales each arc's free-flow time by a per-class, departure-time-dependent
+        multiplier. Each call rebuilds the metric (~milliseconds at country
+        scale). Use this when you intend to mutate the result
+        (update_arcs/close_named/open_named); for repeated read-only queries,
+        prefer customized(), which caches and reuses the metric.
         """
-        weights = self._weights_for(day, conditions)
+        class_mult = self._class_multipliers(depart_at, speed_model)
+        weights = self._weights_for(day, conditions, class_mult)
         metric = rk.CCHMetric(self._cch, weights)
         return CustomizedRoad(self, metric, weights)
 
-    def customized(self, day: date,
-                   conditions: frozenset[str] = frozenset()) -> "CustomizedRoad":
-        """A cached, read-only CustomizedRoad for (day, conditions).
+    def customized(self, day: date, conditions: frozenset[str] = frozenset(), *,
+                   depart_at=None, speed_model=None) -> "CustomizedRoad":
+        """A cached, read-only CustomizedRoad for (day, conditions, model, hour).
 
         Reuses the metric across queries (customize() rebuilds it each call), so
         many same-day lookups (e.g. a driving matrix) pay the build once. Do not
         mutate the returned object; use customize() when you need a mutable one.
         """
-        key = (day, conditions)
+        from travelplanner.speed import get_speed_model
+        model = speed_model or get_speed_model()
+        bucket = None if depart_at is None else depart_at.hour
+        key = (day, conditions, model, bucket)
         cache = self._customized_cache
         road = cache.get(key)
         if road is None:
-            road = self.customize(day, conditions)
+            road = self.customize(day, conditions, depart_at=depart_at,
+                                  speed_model=model)
             cache[key] = road
             if len(cache) > _CUSTOMIZED_CACHE_MAX:
                 cache.pop(next(iter(cache)))  # FIFO evict oldest insertion
