@@ -50,9 +50,30 @@ REGIONS = {
 
 @dataclass(frozen=True)
 class DriveResult:
+    """Outcome of a driving query.
+
+    drivable: whether a road route connects origin and destination.
+    duration: travel time along the routed road path.
+    distance_km: length of that routed path (the sum of straight segments
+        between consecutive OpenStreetMap nodes along it), in km. This is the
+        driven road distance, not straight-line origin->destination distance.
+
+    Results are direction-dependent: drive(a, b) may differ from drive(b, a)
+    (one-way streets, turn restrictions) -- a driving matrix is not symmetric.
+    """
+
     drivable: bool
     duration: timedelta | None = None
     distance_km: float | None = None
+
+    def to_dict(self) -> dict:
+        """JSON-safe dict (duration -> seconds)."""
+        return {
+            "drivable": self.drivable,
+            "duration_s": (self.duration.total_seconds()
+                           if self.duration is not None else None),
+            "distance_km": self.distance_km,
+        }
 
 
 def cache_dir() -> str:
@@ -183,11 +204,15 @@ def _coerce(point) -> Location:
                         float(point[0]), float(point[1]))
     text = str(point).strip()
     if "," in text:
-        a, b = text.split(",", 1)
+        a, b = (s.strip() for s in text.split(",", 1))
         try:
-            return Location(text, LocationType.LANDMARK, float(a), float(b))
+            lat, lon = float(a), float(b)
         except ValueError:
-            pass
+            lat = None
+        if lat is not None:
+            # Parses as a coordinate; Location validates the range (and raises a
+            # clear out-of-range error rather than falling back to a city lookup).
+            return Location(text, LocationType.LANDMARK, lat, lon)
     lat, lon = resolve_city(text)
     return Location(text, LocationType.CITY, lat, lon)
 
