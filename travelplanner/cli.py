@@ -87,6 +87,34 @@ def _cmd_plan(args) -> int:
     return 0
 
 
+def _cmd_drive(args) -> int:
+    from travelplanner.roads import drive
+
+    try:
+        result = drive(args.origin, args.destination, region=args.region)
+    except (ValueError, FileNotFoundError) as exc:
+        print(f"error: {exc}")
+        return 2
+    if not result.drivable:
+        print(f"{args.origin} -> {args.destination}: NOT drivable "
+              f"(no road route in region {args.region!r})")
+        return 0
+    print(f"{args.origin} -> {args.destination} [{args.region}]: drivable, "
+          f"{result.duration} ({result.distance_km} km)")
+    return 0
+
+
+def _cmd_prefetch(args) -> int:
+    import os
+    from travelplanner.roads import prefetch
+
+    paths = prefetch(args.regions, build=args.build)
+    for p in paths:
+        size = os.path.getsize(p) / (1024 * 1024)
+        print(f"cached {p} ({size:.0f} MB)")
+    return 0
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         prog="travelplanner",
@@ -103,11 +131,28 @@ def main(argv=None) -> int:
     p.add_argument("--objective", choices=[o.value for o in Objective],
                    default="air_priority", help="ranking objective")
 
+    dr = sub.add_parser("drive",
+                        help="street-accurate driving time + drivability")
+    dr.add_argument("origin", help='"lat,lon" or a bundled city name')
+    dr.add_argument("destination", help='"lat,lon" or a bundled city name')
+    dr.add_argument("--region", required=True,
+                    help="region name, Geofabrik URL, or local .osm.pbf path")
+
+    pf = sub.add_parser("prefetch",
+                        help="download region road data ahead of time")
+    pf.add_argument("regions", nargs="+", help="one or more region names/URLs")
+    pf.add_argument("--build", action="store_true",
+                    help="also build the index to verify it")
+
     args = parser.parse_args(argv)
     if args.command == "demo":
         return _cmd_demo(args)
     if args.command == "plan":
         return _cmd_plan(args)
+    if args.command == "drive":
+        return _cmd_drive(args)
+    if args.command == "prefetch":
+        return _cmd_prefetch(args)
     parser.error("unknown command")
     return 2
 
