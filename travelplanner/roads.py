@@ -191,10 +191,12 @@ road_router.cache_info = _road_router_cached.cache_info
 @lru_cache(maxsize=2)
 def _expanded_router_cached(region: str, data_dir: str | None):
     from travelplanner.graph.road.expanded import ExpandedCCHRoadRouter
-    from travelplanner.graph.road.turns import build_expanded_graph
+    from travelplanner.graph.road.turns import TurnCosts, build_expanded_graph
 
     base = _road_router_cached(region, data_dir)
-    return ExpandedCCHRoadRouter(build_expanded_graph(base.graph))
+    # geometric turn costs (left/right/straight/sharp/U-turn) + signal surcharge
+    expanded = build_expanded_graph(base.graph, turn_costs=TurnCosts())
+    return ExpandedCCHRoadRouter(expanded)
 
 
 def _router_for(region, data_dir, turn_aware):

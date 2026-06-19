@@ -27,6 +27,9 @@ DEFAULT_SPEED_KMH = {
 }
 DRIVING_HIGHWAYS = frozenset(DEFAULT_SPEED_KMH)
 
+# Node highway tags that add a turn delay at the junction.
+SIGNAL_TAGS = frozenset({"traffic_signals"})
+
 _MONTHS = {m: i for i, m in enumerate(
     ["jan", "feb", "mar", "apr", "may", "jun",
      "jul", "aug", "sep", "oct", "nov", "dec"], start=1)}
@@ -102,6 +105,16 @@ def load_road_graph(pbf_path: str,
     builder = RoadGraphBuilder(store_names=store_names)
 
     class _Handler(osmium.SimpleHandler):
+        def __init__(self) -> None:
+            super().__init__()
+            self.signals: set[int] = set()   # OSM ids of traffic-signal nodes
+
+        def node(self, n) -> None:
+            for t in n.tags:
+                if t.k == "highway" and t.v in SIGNAL_TAGS:
+                    self.signals.add(n.id)
+                    break
+
         def way(self, w) -> None:
             tags = {t.k: t.v for t in w.tags}
             highway = tags.get("highway")
@@ -117,8 +130,12 @@ def load_road_graph(pbf_path: str,
                    for n in w.nodes if n.location.valid()]
             for (a, alat, alon), (b, blat, blon) in zip(pts, pts[1:]):
                 ka, kb = a, b  # OSM node ids are int64; keep them packed as ints
-                builder.add_node(ka, alat, alon)
-                builder.add_node(kb, blat, blon)
+                ia = builder.add_node(ka, alat, alon)
+                ib = builder.add_node(kb, blat, blon)
+                if ka in self.signals:
+                    builder.mark_signal(ia)
+                if kb in self.signals:
+                    builder.mark_signal(ib)
                 dist_km = haversine(alat, alon, blat, blon)
                 seconds = dist_km / speed * 3600.0
                 if direction >= 0:
@@ -126,5 +143,6 @@ def load_road_graph(pbf_path: str,
                 if direction <= 0:
                     builder.add_arc(kb, ka, seconds, validity, name, highway)
 
-    _Handler().apply_file(pbf_path, locations=True)
+    handler = _Handler()
+    handler.apply_file(pbf_path, locations=True)
     return builder.build()

@@ -33,6 +33,7 @@ class RoadGraph:
     name_table: tuple[str, ...]
     arc_class: array | None = None   # int index into class_table (OSM highway class)
     class_table: tuple[str, ...] = ()
+    signal_nodes: frozenset = frozenset()   # node indices with traffic signals
     _index_cache: dict | None = field(default=None, compare=False, repr=False)
 
     @property
@@ -81,6 +82,11 @@ class RoadGraphBuilder:
         self._arc_class = array("i")
         self._class_table: list[str] = []
         self._class_map: dict[str, int] = {}
+        self._signal_nodes: set[int] = set()
+
+    def mark_signal(self, index: int) -> None:
+        """Mark a node index as carrying traffic signals (for turn costs)."""
+        self._signal_nodes.add(index)
 
     def _intern_class(self, highway: str) -> int:
         idx = self._class_map.get(highway)
@@ -162,4 +168,5 @@ class RoadGraphBuilder:
             name_table=tuple(self._name_table),
             arc_class=self._arc_class,
             class_table=tuple(self._class_table),
+            signal_nodes=frozenset(self._signal_nodes),
         )

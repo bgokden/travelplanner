@@ -7,6 +7,13 @@ All notable changes to this project are documented here. The format is based on
 ## [Unreleased]
 
 ### Added
+- Turn-aware driving (`drive(..., turn_aware=True)`): routes over an
+  edge-expanded graph (nodes = road arcs, edges = turns) so turn restrictions and
+  turn/junction costs are modelled like a production router. Geometric turn costs
+  (left/right/straight/sharp/U-turn, OSRM-style, mirrored for left-hand traffic)
+  apply only at real junctions, plus a surcharge at `highway=traffic_signals`
+  nodes. Validated urban (Amsterdam centre +38%, in Google's range). The
+  node-based engine remains the default; turn-aware is opt-in and heavier.
 - Offline road artifacts (`build_region`, `travelplanner build`): parse the OSM
   extract and compute the CCH contraction order at build time, write them to an
   explicit directory, and load them at runtime with no network and no re-parsing
