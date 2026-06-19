@@ -1,13 +1,13 @@
 """travelplanner: multimodal door-to-door travel planning that prioritizes air.
 
-Two entry points:
+`plan(...)` is the graph engine: ground access + scheduled line-haul
+(rail/ferry/flight) + egress, with seasonal/conditional edges and multi-criteria
+(time / cost / transfers) selection, air prioritized. Because it only traverses
+edges that exist in the graph, it never proposes a route that isn't real.
 
-- `plan(...)`  — the multimodal graph engine: ground access + scheduled
-  line-haul (rail/ferry/flight) + egress, with seasonal/conditional edges and
-  multi-criteria (time / cost / transfers) selection, air prioritized. Needs a
-  Timetable and a RoadConnector (build your own, or use the bundled sample).
-- `estimate(...)` — a zero-dependency heuristic for a quick door-to-door guess
-  from just two locations and a time (bundled airport/city tables).
+It routes over the data you give it: a Timetable (build one, or `load_timetable`
+a GTFS feed) and a RoadConnector. A bundled `sample_timetable()` lets you run
+immediately.
 """
 
 from travelplanner.catalog import resolve_city
@@ -19,8 +19,6 @@ from travelplanner.models import (
     LocationType,
     Mode,
 )
-from travelplanner.modes import DEFAULT_PROFILES, ModeProfile, PlannerConfig
-from travelplanner.planner import plan as estimate
 from travelplanner.graph.query import Objective, TravelQuery
 from travelplanner.graph.scheduled import (
     Stop,
@@ -37,9 +35,7 @@ from travelplanner.graph.coupling import (
 from travelplanner.samples import sample_timetable, sample_trip
 
 __all__ = [
-    # entry points
     "plan",
-    "estimate",
     # location helpers
     "place",
     "city",
@@ -49,7 +45,7 @@ __all__ = [
     "CostLevel",
     "Leg",
     "Itinerary",
-    # multimodal engine
+    # engine
     "Objective",
     "TravelQuery",
     "Timetable",
@@ -61,10 +57,6 @@ __all__ = [
     "CCHConnector",
     "sample_timetable",
     "sample_trip",
-    # heuristic estimator config
-    "PlannerConfig",
-    "ModeProfile",
-    "DEFAULT_PROFILES",
 ]
 
 __version__ = "0.1.0"

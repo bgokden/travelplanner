@@ -6,12 +6,13 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
-### Fixed
-- The heuristic estimator no longer proposes ground (car/train) itineraries for
-  trips beyond a plausible ground range (e.g. a "train across the ocean" for
-  New York -> Tokyo). Car and train now have an upper distance bound, enforced
-  alongside the existing lower bounds. The estimator remains distance-bounded,
-  not land-route-aware (use the multimodal engine for real routing).
+### Removed
+- The non-graph heuristic estimator (`estimate`, `PlannerConfig`, `ModeProfile`,
+  the bundled airport table). It computed itineraries from straight-line
+  distance with no land-route awareness, so it could propose meaningless routes
+  (e.g. a "train across the ocean"). The graph engine `plan` is now the only
+  planner: it traverses only real edges, so it cannot suggest a route that does
+  not exist. The CLI gains a `plan` command and drops `estimate`.
 
 ## [0.1.0] - 2026-06-19
 
