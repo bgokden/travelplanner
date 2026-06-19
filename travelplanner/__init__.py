@@ -18,6 +18,8 @@ from travelplanner.models import (
     Location,
     LocationType,
     Mode,
+    itinerary_records,
+    leg_records,
 )
 from travelplanner.graph.query import Objective, TravelQuery
 from travelplanner.graph.scheduled import (
@@ -55,6 +57,8 @@ __all__ = [
     "CostLevel",
     "Leg",
     "Itinerary",
+    "itinerary_records",
+    "leg_records",
     # engine
     "Objective",
     "TravelQuery",
