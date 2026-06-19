@@ -22,6 +22,10 @@ from travelplanner.graph.road.model import RoadGraph
 # dominates any realistic route yet two of them stay within int range.
 INF = 1_000_000_000
 
+# Bound on the per-router cache of customized metrics (one per distinct
+# day/conditions); FIFO eviction keeps memory bounded for long-lived processes.
+_CUSTOMIZED_CACHE_MAX = 8
+
 
 @dataclass(frozen=True)
 class RoadPath:
@@ -50,6 +54,7 @@ class CCHRoadRouter:
         self.order = list(order)
         self._cch = rk.CCH(self.order, tail, head, False)
         self._updater = rk.CCHMetricPartialUpdater(self._cch)
+        self._customized_cache: dict = {}
 
     @property
     def node_grid(self):
@@ -71,10 +76,34 @@ class CCHRoadRouter:
 
     def customize(self, day: date,
                   conditions: frozenset[str] = frozenset()) -> "CustomizedRoad":
-        """Phase 2: build a queryable metric for a given day and conditions."""
+        """Phase 2: build a fresh queryable metric for a day and conditions.
+
+        Each call rebuilds the metric (~milliseconds at country scale). Use this
+        when you intend to mutate the result (update_arcs/close_named/open_named);
+        for repeated read-only queries on the same day/conditions, prefer
+        customized(), which caches and reuses the metric.
+        """
         weights = self._weights_for(day, conditions)
         metric = rk.CCHMetric(self._cch, weights)
         return CustomizedRoad(self, metric, weights)
+
+    def customized(self, day: date,
+                   conditions: frozenset[str] = frozenset()) -> "CustomizedRoad":
+        """A cached, read-only CustomizedRoad for (day, conditions).
+
+        Reuses the metric across queries (customize() rebuilds it each call), so
+        many same-day lookups (e.g. a driving matrix) pay the build once. Do not
+        mutate the returned object; use customize() when you need a mutable one.
+        """
+        key = (day, conditions)
+        cache = self._customized_cache
+        road = cache.get(key)
+        if road is None:
+            road = self.customize(day, conditions)
+            cache[key] = road
+            if len(cache) > _CUSTOMIZED_CACHE_MAX:
+                cache.pop(next(iter(cache)))  # FIFO evict oldest insertion
+        return road
 
 
 class CustomizedRoad:
