@@ -115,6 +115,14 @@ principled than a fixed "air bonus" that could pick a strictly worse flight.
 - Country-scale road graphs are memory-heavy (node bookkeeping); fine for a
   region, large for a continent.
 
+## Learn more
+
+- A visual walkthrough with worked, real-output examples:
+  [`docs/how-it-works.html`](docs/how-it-works.html) (rendered preview:
+  `docs/how-it-works.png`).
+- Runnable example scenarios (full setup visible):
+  [`examples/scenarios.py`](examples/scenarios.py) — `python examples/scenarios.py`.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
