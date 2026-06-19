@@ -33,6 +33,15 @@ from travelplanner.graph.coupling import (
     plan,
 )
 from travelplanner.samples import sample_timetable, sample_trip
+from travelplanner.roads import (
+    DriveResult,
+    REGIONS,
+    download_region,
+    drive,
+    prefetch,
+    region_connector,
+    road_router,
+)
 
 __all__ = [
     "plan",
@@ -57,6 +66,14 @@ __all__ = [
     "CCHConnector",
     "sample_timetable",
     "sample_trip",
+    # street-accurate driving (on-demand OSM)
+    "drive",
+    "DriveResult",
+    "road_router",
+    "region_connector",
+    "download_region",
+    "prefetch",
+    "REGIONS",
 ]
 
 __version__ = "0.1.0"
