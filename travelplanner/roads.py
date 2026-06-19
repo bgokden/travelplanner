@@ -268,7 +268,18 @@ def _drive_between(road, graph, from_idx: int, to_idx: int) -> DriveResult:
                        distance_km=round(_path_distance_km(graph, path.node_indices), 1))
 
 
-def drive(origin, dest, region: str, *, day: date | None = None,
+def _auto_region(region, data_dir, coords):
+    """Resolve region: keep an explicit one, else auto-select from coordinates.
+
+    With data_dir (offline) the region is just a label, so a None is left as-is.
+    """
+    if region is not None or data_dir is not None:
+        return region
+    from travelplanner.geofabrik import region_for_points
+    return region_for_points(coords).pbf_url
+
+
+def drive(origin, dest, region: str | None = None, *, day: date | None = None,
           depart_at: datetime | None = None,
           conditions: frozenset = frozenset(),
           data_dir: str | None = None, geocoder=None,
@@ -276,22 +287,27 @@ def drive(origin, dest, region: str, *, day: date | None = None,
     """Street-accurate driving estimate, or drivable=False if no road connects.
 
     origin/dest may be a Location, (lat, lon), "lat,lon", or a place name
-    (resolved via the active or supplied geocoder). Times use the active speed
-    model, which decides automatically: average conditions by default, or
-    time-of-day (rush-hour) effects when you pass depart_at. Pass speed_model to
-    override (e.g. free_flow_model). With data_dir, route over a prebuilt offline
-    artifact (see build_region).
+    (resolved via the active or supplied geocoder). region is optional: when
+    omitted it is auto-selected as the smallest Geofabrik extract covering both
+    endpoints (raises for a cross-border trip no single extract covers). Times
+    use the active speed model, which decides automatically: average by default,
+    or time-of-day (rush-hour) effects when you pass depart_at; pass speed_model
+    to override (e.g. free_flow_model). With data_dir, route over a prebuilt
+    offline artifact (see build_region).
     """
+    o = _coerce(origin, geocoder=geocoder)
+    d = _coerce(dest, geocoder=geocoder)
+    region = _auto_region(region, data_dir, [(o.lat, o.lon), (d.lat, d.lon)])
     router = road_router(region, data_dir)
     when_day = (depart_at.date() if depart_at is not None else day) or date.today()
     road = router.customized(when_day, conditions, depart_at=depart_at,
                              speed_model=speed_model)
     return _drive_between(road, router.graph,
-                          _snap(router, _coerce(origin, geocoder=geocoder), region),
-                          _snap(router, _coerce(dest, geocoder=geocoder), region))
+                          _snap(router, o, region), _snap(router, d, region))
 
 
-def drive_matrix(points, region: str, *, dests=None, day: date | None = None,
+def drive_matrix(points, region: str | None = None, *, dests=None,
+                 day: date | None = None,
                  depart_at: datetime | None = None,
                  conditions: frozenset = frozenset(),
                  data_dir: str | None = None, geocoder=None,
@@ -305,13 +321,18 @@ def drive_matrix(points, region: str, *, dests=None, day: date | None = None,
     points x points matrix is computed; otherwise points are origins and dests
     the destinations. Results are direction-dependent (not symmetric).
     """
+    origins = [_coerce(p, geocoder=geocoder) for p in points]
+    dest_locs = origins if dests is None else [_coerce(p, geocoder=geocoder)
+                                               for p in dests]
+    region = _auto_region(region, data_dir,
+                          [(p.lat, p.lon) for p in origins + dest_locs])
     router = road_router(region, data_dir)
     g = router.graph
     when_day = (depart_at.date() if depart_at is not None else day) or date.today()
     road = router.customized(when_day, conditions, depart_at=depart_at,
                              speed_model=speed_model)
-    origin_idx = [_snap(router, _coerce(p, geocoder=geocoder), region) for p in points]
+    origin_idx = [_snap(router, p, region) for p in origins]
     dest_idx = (origin_idx if dests is None
-                else [_snap(router, _coerce(p, geocoder=geocoder), region) for p in dests])
+                else [_snap(router, p, region) for p in dest_locs])
     return [[_drive_between(road, g, oi, di) for di in dest_idx]
             for oi in origin_idx]

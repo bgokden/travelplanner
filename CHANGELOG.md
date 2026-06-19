@@ -21,6 +21,11 @@ All notable changes to this project are documented here. The format is based on
   `Location`/`DriveResult`, plus `itinerary_records`/`leg_records` for pandas;
   `Itinerary.num_transfers` and `total_minutes`.
 - `bench/api_smoke.py`: self-contained smoke + latency-budget check for CI.
+- Automatic region selection: `drive`/`drive_matrix` no longer require a
+  `region` -- when omitted it is auto-selected as the smallest Geofabrik extract
+  whose polygon covers all endpoints (via the geometry index, `region_for` /
+  `region_for_trip`). A trip no single extract covers (cross-border or across
+  water, e.g. Amsterdam->London) raises a clear error pointing to plan().
 - Dynamic speed models (`travelplanner.speed`): driving times now use a
   configurable speed model instead of raw free-flow speed limits. A model maps
   `(highway_class, depart_at) -> time multiplier`; `average_model` (the new

@@ -51,7 +51,13 @@ from travelplanner.roads import (
     region_connector,
     road_router,
 )
-from travelplanner.geofabrik import Region, catalog, list_regions
+from travelplanner.geofabrik import (
+    Region,
+    catalog,
+    list_regions,
+    region_for,
+    region_for_trip,
+)
 from travelplanner.speed import (
     average_model,
     free_flow_model,
@@ -100,6 +106,8 @@ __all__ = [
     "list_regions",
     "catalog",
     "Region",
+    "region_for",
+    "region_for_trip",
     # geocoding (name -> lat/lon); composition helpers in travelplanner.geocoding
     "geocode",
     "set_geocoder",
