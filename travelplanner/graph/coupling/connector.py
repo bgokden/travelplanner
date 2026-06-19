@@ -49,7 +49,15 @@ def _ground_leg(distance_km: float, *, drive_kmh: float, walk_kmh: float,
 
 
 class GeometricConnector:
-    """Straight-line + speed model. Conditions are ignored (no seasonal roads)."""
+    """Straight-line + speed model. Conditions are ignored (no seasonal roads).
+
+    WARNING: this connector is NOT land-route-aware. It estimates ground access
+    from straight-line distance, so it will happily return a car/walk leg across
+    water or impassable terrain, and it cannot represent seasonal or conditional
+    road availability. For feasibility and seasonality (e.g. an island reachable
+    only by a summer ferry), use a road-backed connector (CCHConnector /
+    travelplanner.roads.region_connector) over a real road graph.
+    """
 
     def __init__(self, stops: dict[str, Stop], *, max_access_km: float = 50.0,
                  max_ground_km: float = 1500.0,
@@ -119,13 +127,8 @@ class CCHConnector:
         self._customized: dict[frozenset[str], object] = {}
 
     def _nearest_node(self, lat: float, lon: float) -> str:
-        g = self.router.graph
-        best_i, best_d = 0, float("inf")
-        for i in range(g.node_count):
-            d = haversine(lat, lon, g.latitude[i], g.longitude[i])
-            if d < best_d:
-                best_i, best_d = i, d
-        return g.key(best_i)
+        idx, _ = self.router.node_grid.nearest(lat, lon)
+        return self.router.graph.key(idx)
 
     def _road(self, conditions: frozenset[str], day):
         # cache one customized metric per (conditions); the planner uses one day.

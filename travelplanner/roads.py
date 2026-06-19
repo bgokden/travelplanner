@@ -12,6 +12,24 @@ offline and fast.
 Requires the `road` extra (routingkit-cch + osmium) and internet for the first
 download of each region. `region` may be a known name, a Geofabrik URL, or a
 local .osm.pbf path.
+
+For offline deployment, prepare a region at build time and load it with no
+network at runtime:
+
+    build_region("switzerland", out_dir)          # build step (needs internet)
+    drive(origin, dest, "switzerland", data_dir=out_dir)   # runtime (offline)
+
+build_region writes the parsed road graph and the CCH contraction order (the
+slow, machine-independent steps) to out_dir; data_dir loads them back, skipping
+the download, the OSM parse, and the order computation.
+
+Concurrency: a router and its customized roads wrap native (Rust) routing
+objects that are thread-affine -- do not share one across threads (it raises a
+low-level panic, not a clean Python exception). For parallel batch work use
+separate processes (each loads the same on-disk artifact cheaply), or use
+drive_matrix on one thread, which reuses a single customized metric. Within a
+process, road_router caches one router per region and customized() caches the
+metric per (day, conditions), so sequential calls are fast.
 """
 
 import os
@@ -40,9 +58,30 @@ REGIONS = {
 
 @dataclass(frozen=True)
 class DriveResult:
+    """Outcome of a driving query.
+
+    drivable: whether a road route connects origin and destination.
+    duration: travel time along the routed road path.
+    distance_km: length of that routed path (the sum of straight segments
+        between consecutive OpenStreetMap nodes along it), in km. This is the
+        driven road distance, not straight-line origin->destination distance.
+
+    Results are direction-dependent: drive(a, b) may differ from drive(b, a)
+    (one-way streets, turn restrictions) -- a driving matrix is not symmetric.
+    """
+
     drivable: bool
     duration: timedelta | None = None
     distance_km: float | None = None
+
+    def to_dict(self) -> dict:
+        """JSON-safe dict (duration -> seconds)."""
+        return {
+            "drivable": self.drivable,
+            "duration_s": (self.duration.total_seconds()
+                           if self.duration is not None else None),
+            "distance_km": self.distance_km,
+        }
 
 
 def cache_dir() -> str:
@@ -60,9 +99,18 @@ def resolve_region(region: str) -> str:
     key = region.strip().lower()
     if key in REGIONS:
         return REGIONS[key]
+    # Fall back to the full Geofabrik catalog if its index is already cached
+    # locally (no network here -- run list_regions()/geofabrik.catalog() once to
+    # populate it). This widens coverage from the curated REGIONS to all ~555
+    # extracts without forcing a download on every unknown name.
+    from travelplanner.geofabrik import cached_catalog
+    entry = cached_catalog().get(key)
+    if entry is not None:
+        return entry.pbf_url
     raise ValueError(
         f"Unknown region {region!r}. Use a known name "
-        f"({', '.join(sorted(REGIONS))}), a Geofabrik URL, or a local .osm.pbf path.")
+        f"({', '.join(sorted(REGIONS))}), any Geofabrik catalog id "
+        f"(see list_regions()), a Geofabrik URL, or a local .osm.pbf path.")
 
 
 def download_region(region: str) -> str:
@@ -109,20 +157,60 @@ def prefetch(regions, *, build: bool = False) -> list[str]:
 
 
 @lru_cache(maxsize=4)
-def road_router(region: str):
-    """A CCHRoadRouter for the region (downloaded + built once, then cached)."""
-    from travelplanner.graph.road.osm import load_road_graph
+def _road_router_cached(region: str, data_dir: str | None):
     from travelplanner.graph.road import CCHRoadRouter
 
+    if data_dir is not None:
+        from travelplanner.graph.road.store import load_road_artifact
+        graph, order = load_road_artifact(data_dir)
+        return CCHRoadRouter(graph, order=order)
+
+    from travelplanner.graph.road.osm import load_road_graph
     graph = load_road_graph(download_region(region), store_names=False)
     return CCHRoadRouter(graph)
 
 
-def region_connector(region: str, stops, **kwargs):
+def road_router(region: str, data_dir: str | None = None):
+    """A CCHRoadRouter for the region (built once per process, then cached).
+
+    With data_dir, load a prebuilt offline artifact (no network, no OSM parse,
+    no contraction-order computation). Otherwise download the OSM extract and
+    build from scratch.
+
+    The cache key is normalized so road_router(region) and
+    road_router(region, None) resolve to the same cached instance.
+    """
+    return _road_router_cached(region, data_dir)
+
+
+# Expose the underlying cache controls on the public function.
+road_router.cache_clear = _road_router_cached.cache_clear
+road_router.cache_info = _road_router_cached.cache_info
+
+
+def build_region(region: str, out_dir: str) -> str:
+    """Build an offline road artifact for `region` into `out_dir`; return it.
+
+    Run this at build time, where the network is available: it downloads the OSM
+    extract, parses the road graph, and computes the CCH contraction order (the
+    slow, machine-independent steps), then writes everything to out_dir. At
+    runtime, pass data_dir=out_dir to road_router/drive/region_connector to load
+    it with no network and no re-parsing.
+    """
+    from travelplanner.graph.road import CCHRoadRouter
+    from travelplanner.graph.road.osm import load_road_graph
+    from travelplanner.graph.road.store import save_road_artifact
+
+    graph = load_road_graph(download_region(region), store_names=False)
+    router = CCHRoadRouter(graph)  # computes the contraction order
+    return save_road_artifact(graph, router.order, out_dir)
+
+
+def region_connector(region: str, stops, *, data_dir: str | None = None, **kwargs):
     """A street-accurate CCHConnector backed by the region's road network."""
     from travelplanner.graph.coupling import CCHConnector
 
-    return CCHConnector(road_router(region), stops, **kwargs)
+    return CCHConnector(road_router(region, data_dir), stops, **kwargs)
 
 
 def _coerce(point) -> Location:
@@ -133,11 +221,15 @@ def _coerce(point) -> Location:
                         float(point[0]), float(point[1]))
     text = str(point).strip()
     if "," in text:
-        a, b = text.split(",", 1)
+        a, b = (s.strip() for s in text.split(",", 1))
         try:
-            return Location(text, LocationType.LANDMARK, float(a), float(b))
+            lat, lon = float(a), float(b)
         except ValueError:
-            pass
+            lat = None
+        if lat is not None:
+            # Parses as a coordinate; Location validates the range (and raises a
+            # clear out-of-range error rather than falling back to a city lookup).
+            return Location(text, LocationType.LANDMARK, lat, lon)
     lat, lon = resolve_city(text)
     return Location(text, LocationType.CITY, lat, lon)
 
@@ -147,45 +239,67 @@ def _coerce(point) -> Location:
 MAX_SNAP_KM = 25.0
 
 
-def _nearest_node(graph, lat: float, lon: float) -> tuple[int, float]:
-    best_i, best_d = 0, float("inf")
-    for i in range(graph.node_count):
-        d = haversine(lat, lon, graph.latitude[i], graph.longitude[i])
-        if d < best_d:
-            best_i, best_d = i, d
-    return best_i, best_d
-
-
-def _snap(graph, point: Location, region: str) -> str:
-    idx, dist = _nearest_node(graph, point.lat, point.lon)
+def _snap(router, point: Location, region: str) -> int:
+    idx, dist = router.node_grid.nearest(point.lat, point.lon)
     if dist > MAX_SNAP_KM:
         raise ValueError(
             f"{point.name!r} ({point.lat},{point.lon}) is not within the "
             f"{region!r} road data (nearest road is {dist:.0f} km away). "
             f"Use a region that covers it.")
-    return graph.key(idx)
+    return idx
 
 
-def _path_distance_km(graph, node_keys) -> float:
+def _path_distance_km(graph, node_indices) -> float:
     total = 0.0
-    idx = [graph.index(k) for k in node_keys]
-    for a, b in zip(idx, idx[1:]):
+    for a, b in zip(node_indices, node_indices[1:]):
         total += haversine(graph.latitude[a], graph.longitude[a],
                            graph.latitude[b], graph.longitude[b])
     return total
 
 
-def drive(origin, dest, region: str, *, day: date | None = None,
-          conditions: frozenset = frozenset()) -> DriveResult:
-    """Street-accurate driving estimate, or drivable=False if no road connects."""
-    o = _coerce(origin)
-    d = _coerce(dest)
-    router = road_router(region)
-    g = router.graph
-    road = router.customize(day or date.today(), conditions)
-    path = road.route(_snap(g, o, region), _snap(g, d, region))
+def _drive_between(road, graph, from_idx: int, to_idx: int) -> DriveResult:
+    if from_idx == to_idx:
+        return DriveResult(drivable=True, duration=timedelta(0), distance_km=0.0)
+    path = road.route_index(from_idx, to_idx)
     if path is None:
         return DriveResult(drivable=False)
     return DriveResult(drivable=True,
                        duration=timedelta(seconds=path.seconds),
-                       distance_km=round(_path_distance_km(g, path.node_keys), 1))
+                       distance_km=round(_path_distance_km(graph, path.node_indices), 1))
+
+
+def drive(origin, dest, region: str, *, day: date | None = None,
+          conditions: frozenset = frozenset(),
+          data_dir: str | None = None) -> DriveResult:
+    """Street-accurate driving estimate, or drivable=False if no road connects.
+
+    With data_dir, route over a prebuilt offline artifact (see build_region)
+    rather than downloading and building the region.
+    """
+    router = road_router(region, data_dir)
+    road = router.customized(day or date.today(), conditions)
+    return _drive_between(road, router.graph,
+                          _snap(router, _coerce(origin), region),
+                          _snap(router, _coerce(dest), region))
+
+
+def drive_matrix(points, region: str, *, dests=None, day: date | None = None,
+                 conditions: frozenset = frozenset(),
+                 data_dir: str | None = None) -> list[list[DriveResult]]:
+    """Driving results for every origin x destination pair.
+
+    Reuses one customized road metric and snaps each point once, so it is far
+    cheaper than calling drive() per pair. Returns a list of rows (one per
+    origin); each entry is a DriveResult (drivable=False when no road connects,
+    duration/distance 0 on the diagonal). With dests=None the square
+    points x points matrix is computed; otherwise points are origins and dests
+    the destinations. Results are direction-dependent (not symmetric).
+    """
+    router = road_router(region, data_dir)
+    g = router.graph
+    road = router.customized(day or date.today(), conditions)
+    origin_idx = [_snap(router, _coerce(p), region) for p in points]
+    dest_idx = (origin_idx if dests is None
+                else [_snap(router, _coerce(p), region) for p in dests])
+    return [[_drive_between(road, g, oi, di) for di in dest_idx]
+            for oi in origin_idx]

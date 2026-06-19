@@ -172,7 +172,21 @@ def plan(origin: Location, dest: Location, depart_at: datetime,
          objective: Objective = Objective.AIR_PRIORITY,
          top_n: int = 3,
          horizon: timedelta = timedelta(days=2)) -> list[Itinerary]:
-    """Rank Pareto-optimal door-to-door itineraries for the given objective."""
+    """Rank Pareto-optimal door-to-door itineraries for the given objective.
+
+    Returns a list of up to top_n Itinerary objects, best first. An EMPTY list
+    means no route exists for the date/conditions (e.g. an out-of-season ferry
+    with no road alternative) -- it is not an error. Invalid input (e.g. an
+    out-of-range coordinate) raises instead, so empty != bad input.
+
+    Each Itinerary exposes: legs (list[Leg]), depart_at / arrive_at (datetime,
+    naive local time), total_duration (timedelta; total_minutes for a float),
+    total_distance_km, primary_mode (Mode of the longest leg), cost_level
+    (CostLevel, the max over legs), and num_transfers (line-haul changes). Each
+    Leg has mode, from_loc/to_loc, distance_km, travel_time and overhead (wait)
+    timedeltas, and cost_level. Use to_dict()/to_json() or itinerary_records /
+    leg_records for JSON or tabular output.
+    """
     day = depart_at.date()
     candidates: list[Itinerary] = []
 

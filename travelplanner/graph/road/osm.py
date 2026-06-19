@@ -116,7 +116,7 @@ def load_road_graph(pbf_path: str,
             pts = [(n.ref, n.location.lat, n.location.lon)
                    for n in w.nodes if n.location.valid()]
             for (a, alat, alon), (b, blat, blon) in zip(pts, pts[1:]):
-                ka, kb = str(a), str(b)
+                ka, kb = a, b  # OSM node ids are int64; keep them packed as ints
                 builder.add_node(ka, alat, alon)
                 builder.add_node(kb, blat, blon)
                 dist_km = haversine(alat, alon, blat, blon)

@@ -22,28 +22,48 @@ from travelplanner.graph.road.model import RoadGraph
 # dominates any realistic route yet two of them stay within int range.
 INF = 1_000_000_000
 
+# Bound on the per-router cache of customized metrics (one per distinct
+# day/conditions); FIFO eviction keeps memory bounded for long-lived processes.
+_CUSTOMIZED_CACHE_MAX = 8
+
 
 @dataclass(frozen=True)
 class RoadPath:
     seconds: int
-    node_keys: list[str]
+    node_indices: list[int]
+    node_keys: list
     arc_indices: list[int]
 
 
 class CCHRoadRouter:
     """Phase 1: metric-independent preprocessing over a RoadGraph."""
 
-    def __init__(self, graph: RoadGraph) -> None:
+    def __init__(self, graph: RoadGraph, order: list[int] | None = None) -> None:
         self.graph = graph
+        self._node_grid = None
         # routingkit needs plain lists; build them once (freed after setup).
         tail = list(graph.tail)
         head = list(graph.head)
-        order = rk.compute_order_inertial(
-            graph.node_count, tail, head,
-            list(graph.latitude), list(graph.longitude),
-        )
-        self._cch = rk.CCH(order, tail, head, False)
+        # The contraction order is the expensive part of preprocessing; a caller
+        # that persisted it (offline build) can pass it in to skip recomputation.
+        if order is None:
+            order = rk.compute_order_inertial(
+                graph.node_count, tail, head,
+                list(graph.latitude), list(graph.longitude),
+            )
+        self.order = list(order)
+        self._cch = rk.CCH(self.order, tail, head, False)
         self._updater = rk.CCHMetricPartialUpdater(self._cch)
+        self._customized_cache: dict = {}
+
+    @property
+    def node_grid(self):
+        """Spatial index for nearest-node snapping (built once, on first use)."""
+        if self._node_grid is None:
+            from travelplanner.graph.road.spatial import NodeGrid
+            self._node_grid = NodeGrid.build(self.graph.latitude,
+                                             self.graph.longitude)
+        return self._node_grid
 
     def _weights_for(self, day: date, conditions: frozenset[str]) -> list[int]:
         # Evaluate each distinct validity once, then map arcs by their interned
@@ -56,10 +76,34 @@ class CCHRoadRouter:
 
     def customize(self, day: date,
                   conditions: frozenset[str] = frozenset()) -> "CustomizedRoad":
-        """Phase 2: build a queryable metric for a given day and conditions."""
+        """Phase 2: build a fresh queryable metric for a day and conditions.
+
+        Each call rebuilds the metric (~milliseconds at country scale). Use this
+        when you intend to mutate the result (update_arcs/close_named/open_named);
+        for repeated read-only queries on the same day/conditions, prefer
+        customized(), which caches and reuses the metric.
+        """
         weights = self._weights_for(day, conditions)
         metric = rk.CCHMetric(self._cch, weights)
         return CustomizedRoad(self, metric, weights)
+
+    def customized(self, day: date,
+                   conditions: frozenset[str] = frozenset()) -> "CustomizedRoad":
+        """A cached, read-only CustomizedRoad for (day, conditions).
+
+        Reuses the metric across queries (customize() rebuilds it each call), so
+        many same-day lookups (e.g. a driving matrix) pay the build once. Do not
+        mutate the returned object; use customize() when you need a mutable one.
+        """
+        key = (day, conditions)
+        cache = self._customized_cache
+        road = cache.get(key)
+        if road is None:
+            road = self.customize(day, conditions)
+            cache[key] = road
+            if len(cache) > _CUSTOMIZED_CACHE_MAX:
+                cache.pop(next(iter(cache)))  # FIFO evict oldest insertion
+        return road
 
 
 class CustomizedRoad:
@@ -71,15 +115,27 @@ class CustomizedRoad:
         self._weights = list(weights)
         self._query = rk.CCHQuery(metric)
 
-    def route(self, from_key: str, to_key: str) -> RoadPath | None:
-        """Phase 3: shortest path, or None if unreachable / only via closed arcs."""
+    def route(self, from_key, to_key) -> RoadPath | None:
+        """Shortest path between two node keys (resolves keys to indices)."""
         g = self._router.graph
-        res = self._query.run(g.index(from_key), g.index(to_key))
+        return self.route_index(g.index(from_key), g.index(to_key))
+
+    def route_index(self, from_index: int, to_index: int) -> RoadPath | None:
+        """Phase 3: shortest path by node index, or None if unreachable.
+
+        The index-based entry point avoids the key -> index lookup, so callers
+        that already hold node indices (e.g. coordinate snapping) never build the
+        reverse key map.
+        """
+        g = self._router.graph
+        res = self._query.run(from_index, to_index)
         if res.distance is None or res.distance >= INF:
             return None
+        node_indices = list(res.node_path)
         return RoadPath(
             seconds=res.distance,
-            node_keys=[g.key(i) for i in res.node_path],
+            node_indices=node_indices,
+            node_keys=[g.key(i) for i in node_indices],
             arc_indices=list(res.arc_path),
         )
 

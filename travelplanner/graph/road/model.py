@@ -9,15 +9,19 @@ once per query rather than once per arc.
 """
 
 from array import array
-from dataclasses import dataclass
+from collections.abc import Sequence
+from dataclasses import dataclass, field
 
 from travelplanner.graph.validity import ALWAYS, Validity
 
 
 @dataclass(frozen=True)
 class RoadGraph:
-    node_keys: list[str]
-    node_index: dict[str, int]
+    # node_keys is the external identity per internal index: a list[str] for
+    # arbitrary keys, or a packed array("q") for integer (OSM) ids. The reverse
+    # key -> index map is built lazily (see index()) so the index-based routing
+    # path never pays for it at country scale.
+    node_keys: Sequence
     latitude: array
     longitude: array
     tail: array
@@ -27,6 +31,7 @@ class RoadGraph:
     validity_table: tuple[Validity, ...]
     arc_name: array | None       # int index into name_table, or None
     name_table: tuple[str, ...]
+    _index_cache: dict | None = field(default=None, compare=False, repr=False)
 
     @property
     def node_count(self) -> int:
@@ -36,10 +41,14 @@ class RoadGraph:
     def arc_count(self) -> int:
         return len(self.tail)
 
-    def index(self, key: str) -> int:
-        return self.node_index[key]
+    def index(self, key) -> int:
+        cache = self._index_cache
+        if cache is None:
+            cache = {k: i for i, k in enumerate(self.node_keys)}
+            object.__setattr__(self, "_index_cache", cache)
+        return cache[key]
 
-    def key(self, index: int) -> str:
+    def key(self, index: int):
         return self.node_keys[index]
 
     def arcs_by_name(self, name: str) -> list[int]:
@@ -117,9 +126,14 @@ class RoadGraphBuilder:
         return arcs
 
     def build(self) -> RoadGraph:
+        # Integer keys (OSM node ids) pack into a compact array, dropping the
+        # per-node Python str/int objects; arbitrary keys stay a list.
+        try:
+            node_keys: Sequence = array("q", self._keys)
+        except (TypeError, OverflowError):
+            node_keys = list(self._keys)
         return RoadGraph(
-            node_keys=list(self._keys),
-            node_index=dict(self._index),
+            node_keys=node_keys,
             latitude=self._lat,
             longitude=self._lon,
             tail=self._tail,

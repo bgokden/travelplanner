@@ -18,6 +18,8 @@ from travelplanner.models import (
     Location,
     LocationType,
     Mode,
+    itinerary_records,
+    leg_records,
 )
 from travelplanner.graph.query import Objective, TravelQuery
 from travelplanner.graph.scheduled import (
@@ -36,12 +38,15 @@ from travelplanner.samples import sample_timetable, sample_trip
 from travelplanner.roads import (
     DriveResult,
     REGIONS,
+    build_region,
     download_region,
     drive,
+    drive_matrix,
     prefetch,
     region_connector,
     road_router,
 )
+from travelplanner.geofabrik import Region, catalog, list_regions
 
 __all__ = [
     "plan",
@@ -54,6 +59,8 @@ __all__ = [
     "CostLevel",
     "Leg",
     "Itinerary",
+    "itinerary_records",
+    "leg_records",
     # engine
     "Objective",
     "TravelQuery",
@@ -68,12 +75,18 @@ __all__ = [
     "sample_trip",
     # street-accurate driving (on-demand OSM)
     "drive",
+    "drive_matrix",
     "DriveResult",
     "road_router",
     "region_connector",
+    "build_region",
     "download_region",
     "prefetch",
     "REGIONS",
+    # region catalog (Geofabrik)
+    "list_regions",
+    "catalog",
+    "Region",
 ]
 
 __version__ = "0.1.0"

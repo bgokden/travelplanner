@@ -91,7 +91,8 @@ def _cmd_drive(args) -> int:
     from travelplanner.roads import drive
 
     try:
-        result = drive(args.origin, args.destination, region=args.region)
+        result = drive(args.origin, args.destination, region=args.region,
+                       data_dir=args.data_dir)
     except (ValueError, FileNotFoundError) as exc:
         print(f"error: {exc}")
         return 2
@@ -112,6 +113,29 @@ def _cmd_prefetch(args) -> int:
     for p in paths:
         size = os.path.getsize(p) / (1024 * 1024)
         print(f"cached {p} ({size:.0f} MB)")
+    return 0
+
+
+def _cmd_build(args) -> int:
+    from travelplanner.roads import build_region
+
+    out = build_region(args.region, args.out_dir)
+    print(f"built offline artifact for {args.region!r} in {out}")
+    return 0
+
+
+def _cmd_regions(args) -> int:
+    from travelplanner.geofabrik import list_regions
+
+    regions = list_regions()
+    if args.filter:
+        needle = args.filter.lower()
+        regions = [r for r in regions
+                   if needle in r.id.lower() or needle in r.name.lower()]
+    for r in regions:
+        parent = f" (in {r.parent})" if r.parent else ""
+        print(f"{r.id}\t{r.name}{parent}")
+    print(f"\n{len(regions)} regions")
     return 0
 
 
@@ -137,12 +161,25 @@ def main(argv=None) -> int:
     dr.add_argument("destination", help='"lat,lon" or a bundled city name')
     dr.add_argument("--region", required=True,
                     help="region name, Geofabrik URL, or local .osm.pbf path")
+    dr.add_argument("--data-dir",
+                    help="prebuilt offline artifact dir (see 'build'); "
+                         "skips download and rebuild")
 
     pf = sub.add_parser("prefetch",
                         help="download region road data ahead of time")
     pf.add_argument("regions", nargs="+", help="one or more region names/URLs")
     pf.add_argument("--build", action="store_true",
                     help="also build the index to verify it")
+
+    bd = sub.add_parser("build",
+                        help="build an offline road artifact (run at build time)")
+    bd.add_argument("region", help="region name, Geofabrik URL, or local .osm.pbf path")
+    bd.add_argument("--out-dir", required=True,
+                    help="directory to write the offline artifact into")
+
+    rg = sub.add_parser("regions",
+                        help="list downloadable Geofabrik regions")
+    rg.add_argument("--filter", help="only show regions matching this substring")
 
     args = parser.parse_args(argv)
     if args.command == "demo":
@@ -153,6 +190,10 @@ def main(argv=None) -> int:
         return _cmd_drive(args)
     if args.command == "prefetch":
         return _cmd_prefetch(args)
+    if args.command == "build":
+        return _cmd_build(args)
+    if args.command == "regions":
+        return _cmd_regions(args)
     parser.error("unknown command")
     return 2
 
