@@ -41,6 +41,18 @@ def test_plan_trip_objective_passthrough():
     assert cheap[0].primary_mode is not Mode.FLIGHT
 
 
+def test_plan_trip_greenest_objective():
+    """GREENEST flows through plan_trip and prefers the lower-driving option."""
+    tt = _airport_train_timetable()
+    origin = place("Amsterdam centre", LocationType.HOTEL, 52.3702, 4.8952)
+    dest = place("Vaduz", LocationType.HOTEL, 47.1410, 9.5215)
+    depart = datetime(2026, 6, 17, 7, 30)
+    # transit access generates the no-car walk->train->flight option; GREENEST keeps it first
+    best = plan_trip(origin, dest, depart, tt, access="transit",
+                     objective=Objective.GREENEST)[0]
+    assert not any(leg.mode is Mode.CAR for leg in best.legs)
+
+
 def test_plan_trip_top_n():
     origin, dest, depart = sample_trip()
     tt = sample_timetable()

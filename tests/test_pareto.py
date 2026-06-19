@@ -53,6 +53,44 @@ def test_air_priority_picks_flight():
     assert results[0].primary_mode is Mode.FLIGHT
 
 
+def _drive_vs_walk_timetable():
+    """A fast flight reached only by driving to a far airport, vs a slower train
+    reached on foot from a near station -- so the train uses no private car."""
+    tt = Timetable()
+    tt.add_stop(Stop("FarAirO", "origin airport", 47.0, 7.30, NodeType.AIRPORT))
+    tt.add_stop(Stop("FarAirD", "dest airport", 45.0, 9.30, NodeType.AIRPORT))
+    tt.add_stop(Stop("NearStO", "origin station", 47.0, 7.005))
+    tt.add_stop(Stop("NearStD", "dest station", 45.0, 9.005))
+    tt.add_trip(make_trip("FLT", Mode.FLIGHT, [
+        ("FarAirO", "09:00", "09:00"), ("FarAirD", "10:00", "10:00")],
+        cost_level=CostLevel.HIGH))
+    tt.add_trip(make_trip("TRN", Mode.TRAIN, [
+        ("NearStO", "09:00", "09:00"), ("NearStD", "13:00", "13:00")],
+        cost_level=CostLevel.MEDIUM))
+    return tt
+
+
+def test_greenest_minimizes_driving():
+    """GREENEST keeps and prefers the low-car (train) option that AIR_PRIORITY
+    and FASTEST rank below the drive-to-airport flight."""
+    tt = _drive_vs_walk_timetable()
+    conn = GeometricConnector(tt.stops)
+    green = plan(ORIGIN, DEST, DEP, tt, conn, objective=Objective.GREENEST)[0]
+    air = plan(ORIGIN, DEST, DEP, tt, conn, objective=Objective.AIR_PRIORITY)[0]
+    assert air.primary_mode is Mode.FLIGHT
+    assert green.primary_mode is Mode.TRAIN
+    assert not any(leg.mode is Mode.CAR for leg in green.legs)
+
+
+def test_low_car_option_survives_frontier():
+    """The low-driving option is on the Pareto frontier (not pruned) even though
+    it has more transfers and is slower than the flight."""
+    tt = _drive_vs_walk_timetable()
+    conn = GeometricConnector(tt.stops)
+    primaries = {it.primary_mode for it in plan(ORIGIN, DEST, DEP, tt, conn, top_n=5)}
+    assert Mode.FLIGHT in primaries and Mode.TRAIN in primaries
+
+
 def test_cheapest_picks_train():
     tt = _trade_off_timetable()
     conn = GeometricConnector(tt.stops)

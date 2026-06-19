@@ -64,8 +64,8 @@ for it in plan_trip(origin, dest, depart, tt, objective=Objective.AIR_PRIORITY):
         print("  ", leg.mode.value, leg.from_loc.name, "->", leg.to_loc.name)
 ```
 
-Switch the objective to `FASTEST`, `CHEAPEST`, or `FEWEST_TRANSFERS` to see the
-frontier reorder.
+Switch the objective to `FASTEST`, `CHEAPEST`, `FEWEST_TRANSFERS`, or `GREENEST`
+(least private-car distance) to see the frontier reorder.
 
 **Choosing how the first/last mile works:**
 
@@ -132,6 +132,11 @@ travelplanner plan "47.0,7.0" "45.0,9.0" --gtfs feed/ --objective cheapest
 faster, or has fewer transfers, or is the only way, it is chosen; a flight that
 is strictly worse on time *and* cost *and* transfers is dropped. This is more
 principled than a fixed "air bonus" that could pick a strictly worse flight.
+
+The Pareto frontier trades off four axes — total time, cost, transfers, and
+private-car distance — and each objective just reorders that one frontier.
+`GREENEST` ranks by least driving, so a walk-and-train option is preferred over a
+faster drive-to-airport flight; the other objectives are unaffected.
 
 ## Limitations
 

@@ -7,6 +7,15 @@ All notable changes to this project are documented here. The format is based on
 ## [Unreleased]
 
 ### Added
+- `Objective.GREENEST`: ranks itineraries by least private-car distance, then
+  time. Private-car distance is now a fourth Pareto criterion alongside (time,
+  cost, transfers), so a low-driving option (e.g. walk -> train -> flight) stays
+  on the frontier instead of being pruned by a faster drive-to-airport flight
+  with fewer transfers; GREENEST then surfaces it first while the other
+  objectives are unchanged. Available everywhere an `Objective` is (`plan`,
+  `plan_trip`, CLI `--objective greenest`). It ranks across the options already on
+  the frontier; to compare car vs transit *access* to the same flight, pair it
+  with `access="transit"`.
 - Door-to-door multimodal trip planning (`plan_trip`): give two locations (name,
   "lat,lon", tuple, or Location), a departure time, and a GTFS `Timetable`, and
   get ranked door-to-door itineraries (ground access -> rail/ferry/flight

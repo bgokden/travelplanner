@@ -67,9 +67,14 @@ def _transfers(itin: Itinerary) -> int:
     return max(0, vehicles - 1)
 
 
-def _metrics(itin: Itinerary) -> tuple[float, int, int]:
-    return (itin.total_duration.total_seconds(),
-            itin.cost_level.rank, _transfers(itin))
+def _car_km(itin: Itinerary) -> float:
+    """Private-car distance: the axis a traveler who prefers transit minimizes."""
+    return sum(leg.distance_km for leg in itin.legs if leg.mode is Mode.CAR)
+
+
+def _metrics(itin: Itinerary) -> tuple[float, int, int, float]:
+    return (itin.total_duration.total_seconds(), itin.cost_level.rank,
+            _transfers(itin), _car_km(itin))
 
 
 def _dominates(a: Itinerary, b: Itinerary) -> bool:
@@ -97,13 +102,15 @@ def _pareto(cands: list[Itinerary]) -> list[Itinerary]:
 
 def _order_key(objective: Objective):
     def key(it: Itinerary):
-        total, cost, transfers = _metrics(it)
+        total, cost, transfers, car_km = _metrics(it)
         if objective is Objective.FASTEST:
             return (total, cost, transfers)
         if objective is Objective.CHEAPEST:
             return (cost, total, transfers)
         if objective is Objective.FEWEST_TRANSFERS:
             return (transfers, total, cost)
+        if objective is Objective.GREENEST:                # least driving, then time
+            return (car_km, total, transfers, cost)
         air = 0 if it.primary_mode is Mode.FLIGHT else 1   # AIR_PRIORITY
         return (air, total, cost, transfers)
     return key
