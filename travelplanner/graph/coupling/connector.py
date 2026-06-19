@@ -52,10 +52,16 @@ class GeometricConnector:
     """Straight-line + speed model. Conditions are ignored (no seasonal roads)."""
 
     def __init__(self, stops: dict[str, Stop], *, max_access_km: float = 50.0,
+                 max_ground_km: float = 1500.0,
                  drive_kmh: float = 60.0, walk_kmh: float = 5.0,
                  walk_threshold_km: float = 1.5, detour: float = 1.3) -> None:
         self.stops = stops
         self.max_access_km = max_access_km
+        # Straight-line distance is not land-route-aware, so a pure-ground
+        # candidate is only offered within a plausible range; beyond it, ground
+        # would mean "drive across the ocean". (Access/egress are bounded by
+        # max_access_km already.)
+        self.max_ground_km = max_ground_km
         self.drive_kmh = drive_kmh
         self.walk_kmh = walk_kmh
         self.walk_threshold_km = walk_threshold_km
@@ -85,6 +91,8 @@ class GeometricConnector:
     def direct(self, origin: Location, dest: Location,
                conditions: frozenset[str] = frozenset(), *,
                day=None) -> AccessLeg | None:
+        if haversine(origin.lat, origin.lon, dest.lat, dest.lon) > self.max_ground_km:
+            return None
         return self._leg_to(origin, dest)
 
 
