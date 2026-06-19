@@ -2,8 +2,11 @@
 
 import pytest
 
+from dataclasses import dataclass
+
 from travelplanner.models import Location, LocationType
-from travelplanner.graph.road.model import RoadGraphBuilder
+from travelplanner.graph.road.model import RoadGraph, RoadGraphBuilder
+from travelplanner.graph.road.spatial import NodeGrid
 from travelplanner.roads import _coerce, _snap, resolve_region
 
 
@@ -38,21 +41,29 @@ def test_coerce_location_passthrough():
     assert _coerce(loc) is loc
 
 
-def _tiny_graph():
+@dataclass
+class _RouterShim:
+    """Minimal router for _snap: a graph plus its spatial index (no routingkit)."""
+    graph: RoadGraph
+    node_grid: NodeGrid
+
+
+def _tiny_router() -> _RouterShim:
     b = RoadGraphBuilder()
     b.add_node("a", 47.10, 9.50)
     b.add_node("b", 47.12, 9.52)
     b.add_road("a", "b", 120)
-    return b.build()
+    graph = b.build()
+    return _RouterShim(graph, NodeGrid.build(graph.latitude, graph.longitude))
 
 
 def test_snap_within_region():
-    g = _tiny_graph()
-    key = _snap(g, Location("near", LocationType.HOTEL, 47.11, 9.51), "test")
-    assert key in ("a", "b")
+    r = _tiny_router()
+    idx = _snap(r, Location("near", LocationType.HOTEL, 47.11, 9.51), "test")
+    assert r.graph.key(idx) in ("a", "b")
 
 
 def test_snap_out_of_region_raises():
-    g = _tiny_graph()
+    r = _tiny_router()
     with pytest.raises(ValueError):
-        _snap(g, Location("far", LocationType.HOTEL, 0.0, 0.0), "test")
+        _snap(r, Location("far", LocationType.HOTEL, 0.0, 0.0), "test")

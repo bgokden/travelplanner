@@ -6,6 +6,24 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+- Offline road artifacts (`build_region`, `travelplanner build`): parse the OSM
+  extract and compute the CCH contraction order at build time, write them to an
+  explicit directory, and load them at runtime with no network and no re-parsing
+  (`drive(..., data_dir=...)`, `road_router(region, data_dir)`). Rebuilding the
+  CCH from the saved order is near-instant, so cold start drops from minutes to
+  seconds at country scale.
+- `NodeGrid` uniform-grid spatial index for nearest-road-node snapping, replacing
+  the O(n) linear scan in `drive`/snapping and the `CCHConnector`.
+
+### Changed
+- Road graph node keys: integer (OSM) ids now pack into a compact `array("q")`
+  instead of a `list[str]`, and the reverse key->index map is built lazily, so
+  index-based routing (`route_index`, used by `drive`) never materializes it.
+  Together these cut the per-process node-key footprint by ~10x at country scale
+  (the lever for running many restarting workers offline). Arbitrary string keys
+  still work unchanged.
+
 ### Removed
 - The non-graph heuristic estimator (`estimate`, `PlannerConfig`, `ModeProfile`,
   the bundled airport table). It computed itineraries from straight-line

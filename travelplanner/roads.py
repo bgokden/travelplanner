@@ -12,6 +12,16 @@ offline and fast.
 Requires the `road` extra (routingkit-cch + osmium) and internet for the first
 download of each region. `region` may be a known name, a Geofabrik URL, or a
 local .osm.pbf path.
+
+For offline deployment, prepare a region at build time and load it with no
+network at runtime:
+
+    build_region("switzerland", out_dir)          # build step (needs internet)
+    drive(origin, dest, "switzerland", data_dir=out_dir)   # runtime (offline)
+
+build_region writes the parsed road graph and the CCH contraction order (the
+slow, machine-independent steps) to out_dir; data_dir loads them back, skipping
+the download, the OSM parse, and the order computation.
 """
 
 import os
@@ -109,20 +119,48 @@ def prefetch(regions, *, build: bool = False) -> list[str]:
 
 
 @lru_cache(maxsize=4)
-def road_router(region: str):
-    """A CCHRoadRouter for the region (downloaded + built once, then cached)."""
-    from travelplanner.graph.road.osm import load_road_graph
+def road_router(region: str, data_dir: str | None = None):
+    """A CCHRoadRouter for the region (built once per process, then cached).
+
+    With data_dir, load a prebuilt offline artifact (no network, no OSM parse,
+    no contraction-order computation). Otherwise download the OSM extract and
+    build from scratch.
+    """
     from travelplanner.graph.road import CCHRoadRouter
 
+    if data_dir is not None:
+        from travelplanner.graph.road.store import load_road_artifact
+        graph, order = load_road_artifact(data_dir)
+        return CCHRoadRouter(graph, order=order)
+
+    from travelplanner.graph.road.osm import load_road_graph
     graph = load_road_graph(download_region(region), store_names=False)
     return CCHRoadRouter(graph)
 
 
-def region_connector(region: str, stops, **kwargs):
+def build_region(region: str, out_dir: str) -> str:
+    """Build an offline road artifact for `region` into `out_dir`; return it.
+
+    Run this at build time, where the network is available: it downloads the OSM
+    extract, parses the road graph, and computes the CCH contraction order (the
+    slow, machine-independent steps), then writes everything to out_dir. At
+    runtime, pass data_dir=out_dir to road_router/drive/region_connector to load
+    it with no network and no re-parsing.
+    """
+    from travelplanner.graph.road import CCHRoadRouter
+    from travelplanner.graph.road.osm import load_road_graph
+    from travelplanner.graph.road.store import save_road_artifact
+
+    graph = load_road_graph(download_region(region), store_names=False)
+    router = CCHRoadRouter(graph)  # computes the contraction order
+    return save_road_artifact(graph, router.order, out_dir)
+
+
+def region_connector(region: str, stops, *, data_dir: str | None = None, **kwargs):
     """A street-accurate CCHConnector backed by the region's road network."""
     from travelplanner.graph.coupling import CCHConnector
 
-    return CCHConnector(road_router(region), stops, **kwargs)
+    return CCHConnector(road_router(region, data_dir), stops, **kwargs)
 
 
 def _coerce(point) -> Location:
@@ -147,45 +185,40 @@ def _coerce(point) -> Location:
 MAX_SNAP_KM = 25.0
 
 
-def _nearest_node(graph, lat: float, lon: float) -> tuple[int, float]:
-    best_i, best_d = 0, float("inf")
-    for i in range(graph.node_count):
-        d = haversine(lat, lon, graph.latitude[i], graph.longitude[i])
-        if d < best_d:
-            best_i, best_d = i, d
-    return best_i, best_d
-
-
-def _snap(graph, point: Location, region: str) -> str:
-    idx, dist = _nearest_node(graph, point.lat, point.lon)
+def _snap(router, point: Location, region: str) -> int:
+    idx, dist = router.node_grid.nearest(point.lat, point.lon)
     if dist > MAX_SNAP_KM:
         raise ValueError(
             f"{point.name!r} ({point.lat},{point.lon}) is not within the "
             f"{region!r} road data (nearest road is {dist:.0f} km away). "
             f"Use a region that covers it.")
-    return graph.key(idx)
+    return idx
 
 
-def _path_distance_km(graph, node_keys) -> float:
+def _path_distance_km(graph, node_indices) -> float:
     total = 0.0
-    idx = [graph.index(k) for k in node_keys]
-    for a, b in zip(idx, idx[1:]):
+    for a, b in zip(node_indices, node_indices[1:]):
         total += haversine(graph.latitude[a], graph.longitude[a],
                            graph.latitude[b], graph.longitude[b])
     return total
 
 
 def drive(origin, dest, region: str, *, day: date | None = None,
-          conditions: frozenset = frozenset()) -> DriveResult:
-    """Street-accurate driving estimate, or drivable=False if no road connects."""
+          conditions: frozenset = frozenset(),
+          data_dir: str | None = None) -> DriveResult:
+    """Street-accurate driving estimate, or drivable=False if no road connects.
+
+    With data_dir, route over a prebuilt offline artifact (see build_region)
+    rather than downloading and building the region.
+    """
     o = _coerce(origin)
     d = _coerce(dest)
-    router = road_router(region)
+    router = road_router(region, data_dir)
     g = router.graph
     road = router.customize(day or date.today(), conditions)
-    path = road.route(_snap(g, o, region), _snap(g, d, region))
+    path = road.route_index(_snap(router, o, region), _snap(router, d, region))
     if path is None:
         return DriveResult(drivable=False)
     return DriveResult(drivable=True,
                        duration=timedelta(seconds=path.seconds),
-                       distance_km=round(_path_distance_km(g, path.node_keys), 1))
+                       distance_km=round(_path_distance_km(g, path.node_indices), 1))
