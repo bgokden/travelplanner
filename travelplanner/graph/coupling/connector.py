@@ -145,21 +145,30 @@ class CCHConnector:
     `router` is a CCHRoadRouter (duck-typed; not imported here to avoid pulling
     in routingkit when only the geometric connector is used). `stop_to_node`
     maps each stop id to a road-graph node key; stops without a mapping are
-    snapped to the nearest road node by coordinates.
+    snapped to the nearest road node by coordinates. A hop within
+    `walk_threshold_km` is returned as a WALK leg (you would not drive 300 m),
+    matching GeometricConnector; longer hops are routed on the road network.
     """
 
     def __init__(self, router, stops: dict[str, Stop],
                  stop_to_node: dict[str, str] | None = None, *,
                  max_access_km: float = 60.0,
-                 drive_kmh: float = 60.0) -> None:
+                 drive_kmh: float = 60.0, walk_kmh: float = 5.0,
+                 walk_threshold_km: float = 1.5) -> None:
         self.router = router
         self.stops = stops
         self.max_access_km = max_access_km
         self.drive_kmh = drive_kmh
+        self.walk_kmh = walk_kmh
+        self.walk_threshold_km = walk_threshold_km
         self._stop_node = dict(stop_to_node or {})
         for sid, stop in stops.items():
             self._stop_node.setdefault(sid, self._nearest_node(stop.lat, stop.lon))
         self._customized: dict[frozenset[str], object] = {}
+
+    def _walk_leg(self, dist_km: float) -> AccessLeg:
+        return AccessLeg(Mode.WALK, dist_km / self.walk_kmh * 3600.0, dist_km,
+                         CostLevel.LOW)
 
     def _nearest_node(self, lat: float, lon: float) -> str:
         idx, _ = self.router.node_grid.nearest(lat, lon)
@@ -189,7 +198,11 @@ class CCHConnector:
         origin_node = self._nearest_node(point.lat, point.lon)
         out: dict[str, AccessLeg] = {}
         for sid, stop in self.stops.items():
-            if haversine(point.lat, point.lon, stop.lat, stop.lon) > self.max_access_km:
+            d_km = haversine(point.lat, point.lon, stop.lat, stop.lon)
+            if d_km > self.max_access_km:
+                continue
+            if d_km <= self.walk_threshold_km:     # a short hop is walked, not driven
+                out[sid] = self._walk_leg(d_km)
                 continue
             node = self._stop_node[sid]
             a, b = (node, origin_node) if to_dest else (origin_node, node)
@@ -213,6 +226,9 @@ class CCHConnector:
     def direct(self, origin: Location, dest: Location,
                conditions: frozenset[str] = frozenset(), *,
                day=None) -> AccessLeg | None:
+        d_km = haversine(origin.lat, origin.lon, dest.lat, dest.lon)
+        if d_km <= self.walk_threshold_km:         # a short hop is walked, not driven
+            return self._walk_leg(d_km)
         o = self._nearest_node(origin.lat, origin.lon)
         d = self._nearest_node(dest.lat, dest.lon)
         secs = self._seconds(o, d, conditions, day)

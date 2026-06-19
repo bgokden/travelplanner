@@ -113,6 +113,14 @@ All notable changes to this project are documented here. The format is based on
 ### Fixed
 - `road_router` lru_cache key normalized: `road_router(region)` and
   `road_router(region, None)` no longer build the region twice.
+- `CCHConnector` walks short hops: a stop (or a direct trip) within
+  `walk_threshold_km` is now a WALK leg instead of always a CAR leg, matching
+  `GeometricConnector`. This also fixes an unrealistic 0-second egress when the
+  destination snapped to the same road node as the alighting stop (a free
+  teleport); the final sub-km hop to the door is now a short walk.
+- `CCHConnector.access`/`egress`/`direct` no longer crash on `day=None` (allowed
+  by the `RoadConnector` protocol) over a seasonally-validated graph; they
+  default to the current date, matching `drive_route`.
 
 ### Changed (memory)
 - Road graph node keys: integer (OSM) ids now pack into a compact `array("q")`

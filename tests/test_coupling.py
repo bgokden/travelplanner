@@ -142,9 +142,11 @@ def test_cch_connector_door_to_door():
     assert results
     top = results[0]
     assert top.primary_mode is Mode.TRAIN
-    assert top.arrive_at == datetime(2026, 7, 1, 11, 0)
     assert top.legs[0].mode is Mode.CAR          # road access from Bern
     assert any(leg.mode is Mode.TRAIN for leg in top.legs)
+    # the train arrives Brig 11:00; the final ~0.8 km hop to the door is walked
+    assert top.legs[-1].mode is Mode.WALK
+    assert datetime(2026, 7, 1, 11, 0) <= top.arrive_at <= datetime(2026, 7, 1, 11, 15)
 
 
 def test_cch_connector_access_with_default_day():
@@ -167,3 +169,31 @@ def test_cch_connector_access_with_default_day():
 
     legs = conn.access(origin)               # day omitted -> defaults to today
     assert "B" in legs and legs["B"].mode is Mode.CAR
+
+
+def test_cch_connector_walks_short_hops():
+    """A sub-threshold hop is WALK, not CAR (matching GeometricConnector); a
+    longer hop still drives the road network."""
+    pytest.importorskip("routingkit_cch")
+    from travelplanner.graph.road import CCHRoadRouter, RoadGraphBuilder
+    from travelplanner.graph.coupling import CCHConnector
+
+    b = RoadGraphBuilder()
+    b.add_node("near", 47.0, 7.000)
+    b.add_node("far", 47.0, 7.060)
+    b.add_road("near", "far", 400)
+    router = CCHRoadRouter(b.build())
+
+    tt = Timetable()
+    tt.add_stop(_stop("NEAR", 47.0, 7.001))   # ~75 m from origin -> walk
+    tt.add_stop(_stop("FAR", 47.0, 7.060))    # ~4.5 km -> drive
+    conn = CCHConnector(router, tt.stops,
+                        stop_to_node={"NEAR": "near", "FAR": "far"})
+    origin = place("origin", LocationType.HOTEL, 47.0, 7.0)
+
+    legs = conn.access(origin, day=DEP.date())
+    assert legs["NEAR"].mode is Mode.WALK
+    assert legs["FAR"].mode is Mode.CAR
+    # a sub-threshold direct trip walks too
+    nearby = place("nearby", LocationType.HOTEL, 47.0, 7.002)
+    assert conn.direct(origin, nearby, day=DEP.date()).mode is Mode.WALK
