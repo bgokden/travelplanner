@@ -90,6 +90,47 @@ def test_no_exit_forbids_every_destination():
     assert forbidden == {(10, 20), (10, 21)}
 
 
+def test_only_enforced_conservatively_when_geometry_has_no_match():
+    # only_left_turn with two candidate approaches but no geometric left (the to-
+    # way is straight/U relative to both): the mandatory turn must NOT be dropped;
+    # every turn except the to-arc is forbidden from each approach.
+    forbidden = resolve_restrictions(
+        [(("W",), "V", ("C",), "only_left_turn")],
+        arc_into={("W", "V"): [0, 3]},
+        arc_outof={("C", "V"): [9]},
+        out_by_node={5: [1, 2, 9]},
+        node_index={"V": 5},
+        arc_bearing={0: 0.0, 3: 180.0, 9: 0.0})
+    assert forbidden == {(0, 1), (0, 2), (3, 1), (3, 2)}
+    assert (0, 9) not in forbidden and (3, 9) not in forbidden   # to-arc allowed
+
+
+def test_no_straight_on_does_not_forbid_a_non_straight_turn():
+    # no_straight_on onto a perpendicular to-way: neither approach is straight, so
+    # nothing may be forbidden (must not ban an arbitrary 90-degree turn).
+    forbidden = resolve_restrictions(
+        [(("W",), "V", ("C",), "no_straight_on")],
+        arc_into={("W", "V"): [0, 3]},
+        arc_outof={("C", "V"): [9]},
+        out_by_node={5: [9]},
+        node_index={"V": 5},
+        arc_bearing={0: 0.0, 3: 180.0, 9: 90.0})
+    assert forbidden == set()
+
+
+def test_no_straight_on_symmetric_corridor_bans_both_directions():
+    # via interior to a bidirectional from-way W and bidirectional to-way C on a
+    # straight corridor: BOTH straight-throughs are forbidden, not just one.
+    forbidden = resolve_restrictions(
+        [(("W",), "V", ("C",), "no_straight_on")],
+        arc_into={("W", "V"): [0, 3]},
+        arc_outof={("C", "V"): [1, 2]},
+        out_by_node={5: [1, 2]},
+        node_index={"V": 5},
+        arc_bearing={0: 90.0, 3: 270.0, 1: 90.0, 2: 270.0})
+    assert forbidden == {(0, 1), (3, 2)}
+
+
 def test_only_with_absent_to_way_bans_all_other_turns():
     # only_X but the to-way is not in the driving graph (filtered/not loaded): the
     # one allowed turn is unavailable, so every turn from the approach is banned.

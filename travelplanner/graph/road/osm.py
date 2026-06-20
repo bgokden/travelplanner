@@ -70,15 +70,31 @@ def _classify(value: str) -> tuple[str, str]:
     return kind, maneuver
 
 
+# Turn-angle bands (degrees) for matching a restriction's named maneuver.
+_STRAIGHT_MAX = 45.0
+_UTURN_MIN = 150.0
+
+
+def _turn_class(angle: float) -> str:
+    """Classify a signed turn angle into straight/left/right/u."""
+    magnitude = abs(angle)
+    if magnitude <= _STRAIGHT_MAX:
+        return "straight"
+    if magnitude >= _UTURN_MIN:
+        return "u"
+    return "right" if angle > 0.0 else "left"
+
+
 def _maneuver_pairs(from_arcs, to_arcs, maneuver, arc_bearing) -> set:
     """The (in_arc, out_arc) pairs that realize the named maneuver.
 
     With a single candidate the relation identifies the turn unambiguously, so
     that pair is used as-is. With several candidates -- a bidirectional way, or
     from_way == to_way at the via, contributing arcs in both directions -- the
-    geometry (turn angle from the in-arc bearing to the out-arc bearing) selects
-    which physical turn the relation means, so legal straight-through and
-    opposite-approach movements are not over-forbidden.
+    geometry classifies each pair (straight/left/right/u from the turn angle) and
+    every pair matching the maneuver is returned: a symmetric junction forbids
+    BOTH matching movements, legal straight-throughs/opposite approaches are not
+    over-forbidden, and a "straight" restriction never bans a non-straight turn.
     """
     pairs = [(i, o, turn_angle(arc_bearing[i], arc_bearing[o]))
              for i in from_arcs for o in to_arcs]
@@ -87,24 +103,9 @@ def _maneuver_pairs(from_arcs, to_arcs, maneuver, arc_bearing) -> set:
     if len(pairs) == 1:
         i, o, _ = pairs[0]
         return {(i, o)}
-    if maneuver == "u":
-        return {(i, o) for i, o, a in pairs if abs(a) >= 150.0}
-    if maneuver == "straight":
-        i, o, _ = min(pairs, key=lambda p: abs(p[2]))
-        return {(i, o)}
-    if maneuver == "left":
-        lefts = [p for p in pairs if p[2] < 0.0]
-        if not lefts:
-            return set()
-        i, o, _ = min(lefts, key=lambda p: p[2])     # most-negative = sharpest left
-        return {(i, o)}
-    if maneuver == "right":
-        rights = [p for p in pairs if p[2] > 0.0]
-        if not rights:
-            return set()
-        i, o, _ = max(rights, key=lambda p: p[2])     # most-positive = sharpest right
-        return {(i, o)}
-    return {(i, o) for i, o, _ in pairs}              # "any": forbid every movement
+    if maneuver == "any":                            # no_entry/no_exit/generic
+        return {(i, o) for i, o, _ in pairs}
+    return {(i, o) for i, o, a in pairs if _turn_class(a) == maneuver}
 
 
 def resolve_restrictions(restrictions, arc_into, arc_outof, out_by_node,
@@ -140,6 +141,12 @@ def resolve_restrictions(restrictions, arc_into, arc_outof, out_by_node,
         if to_arcs:
             allowed = _maneuver_pairs(from_arcs, to_arcs, maneuver, arc_bearing)
             approaches = {i for i, _ in allowed}
+            if not approaches:
+                # Geometry could not identify the mandated turn, but only_ is
+                # mandatory: enforce it conservatively for every approach (allow
+                # only the to-arcs) rather than dropping the restriction.
+                allowed = {(fa, ta) for fa in from_arcs for ta in to_arcs}
+                approaches = set(from_arcs)
         else:
             # only_X but the to-way is absent from the graph: the single allowed
             # turn is unavailable, so every turn from each approach is forbidden.
@@ -406,23 +413,25 @@ def load_road_graph(pbf_path: str,
     handler.apply_file(pbf_path, locations=True)
 
     if restr:
-        # out-arcs are only needed at restriction via-nodes (for only_* turns).
+        # out-arcs are only needed at restriction via-nodes (for only_* turns);
+        # ferry arcs are excluded -- boarding a ferry is never a road turn that a
+        # turn restriction governs, so an only_* must not forbid it.
         via_indices = {builder._index[v] for v in needed_via
                        if v in builder._index}
+        ferry_cls = builder._class_map.get(FERRY_CLASS)
+        arc_class = builder._arc_class
         out_by_node: dict = {}
         tails = builder._tail
         for i in range(len(tails)):
             t = tails[i]
-            if t in via_indices:
+            if t in via_indices and (ferry_cls is None or arc_class[i] != ferry_cls):
                 out_by_node.setdefault(t, []).append(i)
-        # Bearings disambiguate which physical turn a restriction means; compute
-        # them only for the arcs the restrictions actually reference.
+        # Bearings disambiguate which physical turn a restriction means; only the
+        # from/to arcs need them (out_by_node arcs are used only for membership).
         needed_arcs: set = set()
         for arcs in arc_into.values():
             needed_arcs.update(arcs)
         for arcs in arc_outof.values():
-            needed_arcs.update(arcs)
-        for arcs in out_by_node.values():
             needed_arcs.update(arcs)
         lat, lon = builder._lat, builder._lon
         heads = builder._head
