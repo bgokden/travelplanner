@@ -6,8 +6,8 @@ door-to-door itineraries: ground access -> scheduled line-haul (rail/ferry/
 flight via CSA) -> ground egress, with a pure-ground candidate, selected on a
 Pareto frontier over (time, cost, transfers) and ordered by the objective.
 
-This is GLUE over the existing engine: geocode the endpoints (`_coerce`), pick a
-connector, and call `plan()`. The default access/egress is the region-free
+This is GLUE over the existing engine: geocode the endpoints (`_coerce`), pick the
+connector(s), and call `plan_multi()`. The default access/egress is the region-free
 `GeometricConnector` (straight-line + speed); `road=True` upgrades to a road
 network connector when ONE Geofabrik region covers both endpoints, and falls
 back to geometric otherwise (a cross-border trip never silently loads a country
@@ -23,7 +23,7 @@ from travelplanner.graph.coupling import (
     RoadConnector,
     SplitConnector,
 )
-from travelplanner.graph.coupling.planner import plan, plan_multi
+from travelplanner.graph.coupling.planner import plan_multi
 from travelplanner.graph.query import Objective
 from travelplanner.graph.scheduled.model import Timetable
 from travelplanner.roads import _auto_region, _coerce, region_connector
@@ -85,6 +85,16 @@ def _transit_connector(timetable: Timetable) -> GeometricConnector:
                               walk_threshold_km=WALK_ACCESS_KM)
 
 
+def _mode_connector(mode: str, timetable: Timetable) -> GeometricConnector:
+    """A geometric connector for one first/last-mile mode: 'transit' is walk-only,
+    'car' is the default drive/walk connector. (Callers pass a validated mode.)"""
+    if mode == "transit":
+        return _transit_connector(timetable)
+    if mode == "car":
+        return GeometricConnector(timetable.stops)
+    raise ValueError(f"unknown first/last-mile mode {mode!r}")
+
+
 def _road_connector(origin: Location, dest: Location, timetable: Timetable,
                     region, data_dir, turn_aware):
     """A road-backed connector for the trip, or None to fall back to geometric.
@@ -109,11 +119,59 @@ def _road_connector(origin: Location, dest: Location, timetable: Timetable,
                             turn_aware=turn_aware)
 
 
+def _validate_modes(access: str, egress: str | None, road: bool,
+                    turn_aware: bool) -> None:
+    """Reject mode combinations that cannot be honoured, with a clear reason."""
+    if access not in ("car", "transit", "both"):
+        raise ValueError(f"access must be 'car', 'transit', or 'both', got {access!r}")
+    if egress is not None and egress not in ("car", "transit"):
+        raise ValueError(f"egress must be 'car' or 'transit', got {egress!r}")
+    if turn_aware and not road:
+        raise ValueError("turn_aware=True requires road=True (it tunes the road "
+                         "connector; the geometric connector has no turns).")
+    if access == "both" and egress is not None:
+        raise ValueError("access='both' already pools car and transit; it cannot "
+                         "also take a separate egress mode. Use single access/"
+                         "egress modes for an asymmetric trip.")
+    asymmetric = egress is not None and egress != access
+    if road and (access in ("transit", "both") or asymmetric):
+        raise ValueError("road=True needs car access/egress on both ends; for a "
+                         "transit, 'both', or asymmetric first/last mile (which are "
+                         "geometric) drop road, or build connectors and pass "
+                         "connector=.")
+
+
+def _select_connectors(origin: Location, dest: Location, timetable: Timetable, *,
+                       access: str, egress: str | None, road: bool,
+                       turn_aware: bool, region, data_dir,
+                       connector: RoadConnector | None):
+    """The connector(s) whose candidates plan_multi pools. Usually one; two for
+    access='both' (car + transit pooled on one frontier). An asymmetric trip
+    (egress mode differs from access) is one SplitConnector delegating each end to
+    its own mode connector."""
+    if connector is not None:
+        return [connector]
+    if access == "both":
+        return [_mode_connector("car", timetable), _mode_connector("transit", timetable)]
+    if egress is not None and egress != access:
+        # Direct (no-transit) ground option follows the first-mile mode, so a short
+        # door-to-door hop is classified the same as the symmetric access mode.
+        return [SplitConnector(_mode_connector(access, timetable),
+                               _mode_connector(egress, timetable),
+                               direct_connector=_mode_connector(access, timetable))]
+    if access == "transit":
+        return [_mode_connector("transit", timetable)]
+    if road:
+        backed = _road_connector(origin, dest, timetable, region, data_dir, turn_aware)
+        return [backed if backed is not None else _mode_connector("car", timetable)]
+    return [_mode_connector("car", timetable)]
+
+
 def plan_trip(origin, dest, depart_at: datetime, timetable: Timetable, *,
               objective: Objective = Objective.AIR_PRIORITY, top_n: int = 3,
               conditions: frozenset = frozenset(), geocoder=None,
               road: bool = False, turn_aware: bool = False,
-              access: str = "car",
+              access: str = "car", egress: str | None = None,
               region: str | None = None, data_dir: str | None = None,
               connector: RoadConnector | None = None) -> list[Itinerary]:
     """Rank door-to-door multimodal itineraries between two locations.
@@ -124,7 +182,8 @@ def plan_trip(origin, dest, depart_at: datetime, timetable: Timetable, *,
     (`load_timetable(feed_dir)` or `sample_timetable()`); transit quality is feed
     quality, and feeds are not auto-discovered (you supply one).
 
-    Connector selection: an explicit `connector=` wins. Else with `road=True` and
+    Connector selection: an explicit `connector=` wins and fully defines access/
+    egress, so `road`/`access`/`egress` are then ignored. Else with `road=True` and
     a single Geofabrik region covering both endpoints, access/egress/direct use
     that road network (`region`/`data_dir` pin or load it offline); a cross-border
     trip falls back to the region-free `GeometricConnector`. Without `road`, the
@@ -135,49 +194,36 @@ def plan_trip(origin, dest, depart_at: datetime, timetable: Timetable, *,
     and junction/signal costs. It needs signal + restriction data: a `data_dir`
     built with `build_region(..., turn_aware=True)`, or an online parse.
 
-    `access` selects the first/last-mile mode (like a "Driving" vs "Transit" tab).
+    `access` selects the first-mile mode (like a "Driving" vs "Transit" tab).
     "car" (default) drives/walks to the nearest stop. "transit" only walks to a
     stop within a short radius, so longer hops (e.g. the train to the airport) go
     via the scheduled network -- a no-car door-to-door trip. "both" pools the car
     and transit candidates onto one frontier, so a drive-to-airport itinerary and
     a walk-to-train one compete and you can compare them (pair with
-    `objective=GREENEST` to lead with the lower-driving one). With "transit"/"both"
-    there are no road-backed car legs, so `road`/`turn_aware` do not apply.
+    `objective=GREENEST` to lead with the lower-driving one).
+
+    `egress` overrides the last-mile mode independently of `access` (default: same
+    as `access`). For example `access="transit", egress="car"` walks to the
+    station for the line-haul but takes a car (rental/taxi) from the arrival stop
+    to the door -- a common asymmetric trip. `egress` is "car" or "transit" (not
+    "both"). Asymmetric and "transit"/"both" first/last miles are geometric, so
+    `road`/`turn_aware` are rejected with them (raise; for road-backed car legs
+    there, build connectors and pass `connector=`).
+
+    Note: a "transit" access or egress reaches a stop only within a short walk; if
+    no stop is in range, that end has no transit leg and the trip falls back to the
+    direct ground (drive/walk) candidate -- so a transit request can still yield a
+    car-only itinerary when the door is far from any stop (rather than nothing).
 
     Returns up to `top_n` Itinerary objects, best first for `objective`. An EMPTY
     list means no route exists (not an error); an invalid coordinate raises.
     """
     o = _coerce(origin, geocoder=geocoder)
     d = _coerce(dest, geocoder=geocoder)
+    _validate_modes(access, egress, road, turn_aware)
 
-    if access not in ("car", "transit", "both"):
-        raise ValueError(f"access must be 'car', 'transit', or 'both', got {access!r}")
-    if turn_aware and not road:
-        raise ValueError("turn_aware=True requires road=True (it tunes the road "
-                         "connector; the geometric connector has no turns).")
-    if road and access == "transit":
-        raise ValueError("access='transit' has no car legs, so road=True does not "
-                         "apply; drop road/turn_aware for a transit-access trip.")
-    if road and access == "both":
-        raise ValueError("access='both' uses geometric connectors; for road-backed "
-                         "car access build connectors explicitly and pass connector=.")
-
-    if connector is not None:
-        return plan(o, d, depart_at, timetable, connector,
-                    conditions=conditions, objective=objective, top_n=top_n)
-
-    if access == "both":
-        return plan_multi(o, d, depart_at, timetable,
-                          [GeometricConnector(timetable.stops),
-                           _transit_connector(timetable)],
-                          conditions=conditions, objective=objective, top_n=top_n)
-
-    if access == "transit":
-        connector = _transit_connector(timetable)
-    elif road:
-        connector = _road_connector(o, d, timetable, region, data_dir, turn_aware)
-    if connector is None:
-        connector = GeometricConnector(timetable.stops)
-
-    return plan(o, d, depart_at, timetable, connector,
-                conditions=conditions, objective=objective, top_n=top_n)
+    connectors = _select_connectors(o, d, timetable, access=access, egress=egress,
+                                    road=road, turn_aware=turn_aware, region=region,
+                                    data_dir=data_dir, connector=connector)
+    return plan_multi(o, d, depart_at, timetable, connectors,
+                      conditions=conditions, objective=objective, top_n=top_n)

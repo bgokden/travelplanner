@@ -242,10 +242,100 @@ def test_plan_trip_access_both_shows_car_and_transit():
     assert not any(leg.mode is Mode.CAR for leg in green.legs)
 
 
+def test_plan_trip_asymmetric_transit_access_car_egress():
+    """access='transit', egress='car': walk to the station for the line-haul,
+    then a car from the arrival stop to a door that is too far to walk."""
+    tt = _airport_train_timetable()
+    origin = place("Amsterdam centre", LocationType.HOTEL, 52.3702, 4.8952)   # ~1 km from Centraal
+    dest = place("Liechtenstein countryside", LocationType.HOTEL, 47.18, 9.55)  # ~5 km from VAD
+    depart = datetime(2026, 6, 17, 7, 30)
+
+    best = plan_trip(origin, dest, depart, tt, access="transit", egress="car")[0]
+    assert best.legs[0].mode is Mode.WALK       # transit access (walk to the train)
+    assert best.legs[-1].mode is Mode.CAR       # car egress to the far door
+    assert Mode.TRAIN in [leg.mode for leg in best.legs]
+
+
+def test_plan_trip_egress_matches_access_when_unset():
+    """egress=None behaves exactly like the symmetric access mode."""
+    tt = _airport_train_timetable()
+    origin = place("Amsterdam centre", LocationType.HOTEL, 52.3702, 4.8952)
+    dest = place("Vaduz", LocationType.HOTEL, 47.1410, 9.5215)
+    depart = datetime(2026, 6, 17, 7, 30)
+    a = plan_trip(origin, dest, depart, tt, access="transit")
+    b = plan_trip(origin, dest, depart, tt, access="transit", egress="transit")
+    assert [leg.mode for leg in a[0].legs] == [leg.mode for leg in b[0].legs]
+
+
+def test_plan_trip_egress_car_equals_default_car():
+    """access='car', egress='car' (equal, non-None) takes the plain car path, not
+    the asymmetric SplitConnector branch -- identical to the default."""
+    tt = _airport_train_timetable()
+    origin = place("Amsterdam centre", LocationType.HOTEL, 52.3702, 4.8952)
+    dest = place("Vaduz", LocationType.HOTEL, 47.1410, 9.5215)
+    depart = datetime(2026, 6, 17, 7, 30)
+    a = plan_trip(origin, dest, depart, tt)                          # default car
+    b = plan_trip(origin, dest, depart, tt, access="car", egress="car")
+    assert [leg.mode for leg in a[0].legs] == [leg.mode for leg in b[0].legs]
+
+
+def test_plan_trip_asymmetric_car_access_transit_egress():
+    """access='car', egress='transit': drive to the airport, walk the last mile."""
+    tt = _airport_train_timetable()
+    origin = place("North of Amsterdam", LocationType.HOTEL, 52.424, 4.900)  # ~5 km from Centraal
+    dest = place("Near Vaduz", LocationType.HOTEL, 47.149, 9.510)            # ~1 km from VAD
+    depart = datetime(2026, 6, 17, 7, 30)
+    best = plan_trip(origin, dest, depart, tt, access="car", egress="transit")[0]
+    assert best.legs[0].mode is Mode.CAR        # car access (drive to the airport)
+    assert best.legs[-1].mode is Mode.WALK      # transit egress (walk from the airport)
+    assert Mode.FLIGHT in [leg.mode for leg in best.legs]
+
+
+def test_plan_trip_asymmetric_direct_matches_symmetric_short_hop():
+    """The direct (no-transit) ground leg follows the first-mile mode, so a short
+    transit-access trip walks whether or not egress differs (review fix: the
+    asymmetric direct connector used to use the 1.5 km car threshold and drove)."""
+    tt = Timetable()
+    tt.add_stop(Stop("FAR", "Far station", 40.0, 0.0))          # out of access range
+    origin = place("A", LocationType.HOTEL, 52.000, 0.000)
+    dest = place("B", LocationType.HOTEL, 52.000, 0.026)        # ~1.8 km east (>1.5, <2.0)
+    depart = datetime(2026, 6, 17, 8, 0)
+    sym = plan_trip(origin, dest, depart, tt, access="transit")[0]
+    asym = plan_trip(origin, dest, depart, tt, access="transit", egress="car")[0]
+    assert sym.legs[0].mode is Mode.WALK
+    assert asym.legs[0].mode is Mode.WALK
+
+
 def test_plan_trip_access_invalid_raises():
     origin, dest, depart = sample_trip()
     with pytest.raises(ValueError):
         plan_trip(origin, dest, depart, sample_timetable(), access="bike")
+
+
+def test_plan_trip_egress_invalid_raises():
+    origin, dest, depart = sample_trip()
+    with pytest.raises(ValueError):
+        plan_trip(origin, dest, depart, sample_timetable(), egress="bike")
+
+
+def test_plan_trip_egress_invalid_both_raises():
+    origin, dest, depart = sample_trip()
+    with pytest.raises(ValueError):
+        plan_trip(origin, dest, depart, sample_timetable(), egress="both")
+
+
+def test_plan_trip_both_with_egress_raises():
+    origin, dest, depart = sample_trip()
+    with pytest.raises(ValueError):
+        plan_trip(origin, dest, depart, sample_timetable(),
+                  access="both", egress="car")
+
+
+def test_plan_trip_asymmetric_with_road_raises():
+    origin, dest, depart = sample_trip()
+    with pytest.raises(ValueError):
+        plan_trip(origin, dest, depart, sample_timetable(),
+                  access="transit", egress="car", road=True)
 
 
 def test_plan_trip_access_both_with_road_raises():

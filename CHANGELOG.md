@@ -7,6 +7,16 @@ All notable changes to this project are documented here. The format is based on
 ## [Unreleased]
 
 ### Added
+- Asymmetric first/last mile (`plan_trip(..., access="transit", egress="car")`):
+  `egress` overrides the last-mile mode independently of `access` (default: same
+  as access), built as a `SplitConnector` delegating each end to its own mode
+  connector -- e.g. take the train to the airport, then a rental car from the
+  arrival airport to the door. `egress` is "car" or "transit"; it cannot combine
+  with `access="both"` or with `road=True` (those raise). The connector-selection
+  branching is consolidated into `_validate_modes` + `_select_connectors` and the
+  whole path now goes through `plan_multi`. The pure-ground (no-transit) candidate
+  follows the first-mile mode, so a short door-to-door hop is walked/driven
+  consistently whether or not `egress` differs from `access`.
 - Access-mode diversification (`plan_trip(..., access="both")`) and the
   underlying `plan_multi(origin, dest, depart_at, timetable, connectors, ...)`:
   pool door-to-door candidates from several connectors before a single Pareto/
