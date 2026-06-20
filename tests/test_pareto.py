@@ -1,13 +1,14 @@
 """Phase 4: multi-criteria Pareto frontier + objective selection."""
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from travelplanner import place
-from travelplanner.models import CostLevel, LocationType, Mode
+from travelplanner.models import CostLevel, Itinerary, Leg, Location, LocationType, Mode
 from travelplanner.graph.schema import NodeType
 from travelplanner.graph.scheduled import Stop, Timetable, make_trip
 from travelplanner.graph.query import Objective
 from travelplanner.graph.coupling import GeometricConnector, plan
+from travelplanner.graph.coupling.planner import _dedupe, _order_key
 
 DEP = datetime(2026, 7, 1, 8, 0)
 
@@ -124,3 +125,43 @@ def test_strictly_dominated_flight_is_dropped():
     results = plan(ORIGIN, DEST, DEP, tt, conn, objective=Objective.AIR_PRIORITY)
     assert results[0].primary_mode is Mode.TRAIN
     assert all(it.primary_mode is not Mode.FLIGHT for it in results)
+
+
+# --- ranking-function regressions (review: core planner bug hunt) -----------
+
+def _leg(mode, km, secs, cost=CostLevel.MEDIUM):
+    loc = Location("x", LocationType.LANDMARK, 0.0, 0.0)
+    return Leg(mode=mode, from_loc=loc, to_loc=loc, distance_km=km,
+               travel_time=timedelta(seconds=secs), overhead=timedelta(),
+               cost_level=cost)
+
+
+def _itin(legs):
+    return Itinerary(legs=legs, depart_at=datetime(2026, 7, 1, 8, 0), score=0.0)
+
+
+def test_dedupe_keeps_distinct_cost_and_car_km():
+    """Two same-mode, same-duration itineraries differing on cost / car distance
+    are both kept (the cheaper/greener one is not collapsed away)."""
+    a = _itin([_leg(Mode.CAR, 100.0, 3600, CostLevel.HIGH)])
+    b = _itin([_leg(Mode.CAR, 10.0, 3600, CostLevel.LOW)])
+    assert len(_dedupe([a, b])) == 2
+
+
+def test_dedupe_collapses_true_duplicates():
+    a = _itin([_leg(Mode.CAR, 50.0, 3600, CostLevel.MEDIUM)])
+    b = _itin([_leg(Mode.CAR, 50.0, 3600, CostLevel.MEDIUM)])
+    assert len(_dedupe([a, b])) == 1
+
+
+def test_air_priority_counts_flight_leg_not_longest_leg():
+    """A genuine flight whose airport-access drive is its longest leg must still
+    rank as 'air' under AIR_PRIORITY (it flies)."""
+    flight = _itin([_leg(Mode.CAR, 80.0, 3600), _leg(Mode.FLIGHT, 40.0, 3600),
+                    _leg(Mode.WALK, 0.5, 300)])
+    train = _itin([_leg(Mode.TRAIN, 200.0, 7200)])
+    assert flight.primary_mode is Mode.CAR          # longest leg is the drive
+    key = _order_key(Objective.AIR_PRIORITY)
+    assert key(flight)[0] == 0                       # still treated as air
+    assert key(train)[0] == 1
+    assert sorted([train, flight], key=key)[0] is flight

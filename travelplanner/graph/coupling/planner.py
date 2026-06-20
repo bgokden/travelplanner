@@ -83,10 +83,16 @@ def _dominates(a: Itinerary, b: Itinerary) -> bool:
 
 
 def _dedupe(cands: list[Itinerary]) -> list[Itinerary]:
+    """Drop only TRULY equivalent candidates. The signature covers all four
+    ranking axes (time, cost, transfers, car_km) plus the mode sequence, so two
+    itineraries that differ on any axis both survive to the Pareto stage -- a
+    cheaper or lower-driving option is never collapsed away by an equal-duration
+    same-mode sibling that happened to be pooled first."""
     seen: set = set()
     out: list[Itinerary] = []
     for c in cands:
-        sig = (round(c.total_duration.total_seconds()),
+        total, cost, transfers, car_km = _metrics(c)
+        sig = (round(total), cost, transfers, round(car_km, 3),
                tuple(leg.mode.value for leg in c.legs))
         if sig in seen:
             continue
@@ -111,7 +117,10 @@ def _order_key(objective: Objective):
             return (transfers, total, cost)
         if objective is Objective.GREENEST:                # least driving, then time
             return (car_km, total, transfers, cost)
-        air = 0 if it.primary_mode is Mode.FLIGHT else 1   # AIR_PRIORITY
+        # AIR_PRIORITY: prefer an itinerary that actually flies. Test for a FLIGHT
+        # leg, not primary_mode (the longest leg) -- a long airport-access drive
+        # could otherwise make a genuine flight rank as non-air.
+        air = 0 if any(leg.mode is Mode.FLIGHT for leg in it.legs) else 1
         return (air, total, cost, transfers)
     return key
 
