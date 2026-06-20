@@ -2,7 +2,9 @@
 
 Streams highway ways, turns consecutive node pairs into arcs weighted by
 travel time (from maxspeed or per-highway defaults), and attaches a seasonal
-Validity for ways that carry a recognized conditional winter closure.
+Validity for ways that carry a recognized conditional winter closure. Car
+ferries (route=ferry, car-accessible) are added as arcs too, timed by their
+OSM `duration` tag, so a car route can cross water.
 
 Limitations (Phase 1): turn restrictions and barriers are ignored; the
 conditional parser handles the common `motor_vehicle:conditional = no @ (Mon-Mon)`
@@ -29,6 +31,15 @@ DRIVING_HIGHWAYS = frozenset(DEFAULT_SPEED_KMH)
 
 # Node highway tags that add a turn delay at the junction.
 SIGNAL_TAGS = frozenset({"traffic_signals"})
+
+# Car ferries (route=ferry, car-accessible) join the driving network as arcs so a
+# car route can cross water. Their crossing time is fixed (the OSM `duration`
+# tag, else distance / DEFAULT_FERRY_KMH); FERRY_CLASS keeps that time out of the
+# road speed model (see travelplanner.speed.FIXED_TIME_CLASSES).
+DEFAULT_FERRY_KMH = 30.0
+FERRY_CLASS = "ferry"
+# Access values that admit a private car (an explicit `no` always wins).
+_CAR_ACCESS_YES = frozenset({"yes", "designated", "permissive", "official"})
 
 # Turn-restriction relation values we honour (via-node only; via-way deferred).
 _RESTRICT_NO = frozenset({
@@ -183,6 +194,47 @@ def parse_seasonal_closure(tags: dict[str, str]) -> Validity:
     return Validity()
 
 
+def is_car_ferry(tags: dict[str, str]) -> bool:
+    """True for a route=ferry way a private car may use.
+
+    Conservative for a car graph: a positive motorcar/motor_vehicle access is
+    required, so passenger-only ferries are never added; an explicit `no` on
+    either key rejects the ferry even if the other is positive.
+    """
+    if tags.get("route") != "ferry":
+        return False
+    motorcar = tags.get("motorcar")
+    motor_vehicle = tags.get("motor_vehicle")
+    if motorcar == "no" or motor_vehicle == "no":
+        return False
+    return motorcar in _CAR_ACCESS_YES or motor_vehicle in _CAR_ACCESS_YES
+
+
+def parse_duration(value: str | None) -> float | None:
+    """Crossing time in SECONDS from an OSM `duration` tag, else None.
+
+    Accepts HH:MM:SS, HH:MM (or H:MM), and a bare number of minutes ("35").
+    """
+    if not value:
+        return None
+    value = value.strip()
+    if ":" in value:
+        try:
+            nums = [float(p) for p in value.split(":")]
+        except ValueError:
+            return None
+        if len(nums) == 3:
+            hours, minutes, seconds = nums
+        elif len(nums) == 2:
+            hours, minutes, seconds = nums[0], nums[1], 0.0   # OSM duration=HH:MM
+        else:
+            return None
+        return hours * 3600.0 + minutes * 60.0 + seconds
+    if not re.fullmatch(r"\d+(?:\.\d+)?", value):
+        return None
+    return float(value) * 60.0
+
+
 def parse_maxspeed(value: str | None, fallback_kmh: float) -> float:
     if not value:
         return fallback_kmh
@@ -279,10 +331,40 @@ def load_road_graph(pbf_path: str,
                     self.signals.add(n.id)
                     break
 
+        def _add_ferry(self, w, tags: dict) -> None:
+            # A car ferry joins the network as arcs between its terminal nodes.
+            # The crossing time is fixed: the `duration` tag (split across the
+            # way's segments by length) or distance / DEFAULT_FERRY_KMH.
+            validity = parse_seasonal_closure(tags)
+            name = tags.get("name", "")
+            direction = _is_oneway(tags)        # ferries are normally bidirectional
+            pts = [(n.ref, n.location.lat, n.location.lon)
+                   for n in w.nodes if n.location.valid()]
+            if len(pts) < 2:
+                return
+            seg_km = [haversine(a[1], a[2], b[1], b[2])
+                      for a, b in zip(pts, pts[1:])]
+            total_km = sum(seg_km)
+            total_secs = parse_duration(tags.get("duration"))
+            for (a, alat, alon), (b, blat, blon), dist_km in zip(
+                    pts, pts[1:], seg_km):
+                builder.add_node(a, alat, alon)
+                builder.add_node(b, blat, blon)
+                if total_secs is not None and total_km > 0.0:
+                    seconds = total_secs * dist_km / total_km
+                else:
+                    seconds = dist_km / DEFAULT_FERRY_KMH * 3600.0
+                if direction >= 0:
+                    builder.add_arc(a, b, seconds, validity, name, FERRY_CLASS)
+                if direction <= 0:
+                    builder.add_arc(b, a, seconds, validity, name, FERRY_CLASS)
+
         def way(self, w) -> None:
             tags = {t.k: t.v for t in w.tags}
             highway = tags.get("highway")
             if highway not in allowed:
+                if is_car_ferry(tags):
+                    self._add_ferry(w, tags)
                 return
             speed = parse_maxspeed(tags.get("maxspeed"),
                                    DEFAULT_SPEED_KMH.get(highway, 40))

@@ -3,6 +3,8 @@
 from datetime import date
 
 from travelplanner.graph.road.osm import (
+    is_car_ferry,
+    parse_duration,
     parse_maxspeed,
     parse_seasonal_closure,
 )
@@ -58,3 +60,30 @@ def test_real_trailing_time_spec_ignored():
     v = parse_seasonal_closure(
         {"motor_vehicle:conditional": "no @ (Dec-Mar Mo-Su 00:00-24:00)"})
     assert v.open_months == frozenset({4, 5, 6, 7, 8, 9, 10, 11})
+
+
+# --- ferries --------------------------------------------------------------
+
+def test_is_car_ferry_requires_car_access():
+    assert is_car_ferry({"route": "ferry", "motorcar": "yes"})
+    assert is_car_ferry({"route": "ferry", "motor_vehicle": "yes"})
+    assert is_car_ferry({"route": "ferry", "motor_vehicle": "designated"})
+    # passenger-only ferry: not for a car graph
+    assert not is_car_ferry({"route": "ferry", "foot": "yes"})
+    assert not is_car_ferry({"route": "ferry"})
+    # explicit no wins even if the other key is positive
+    assert not is_car_ferry(
+        {"route": "ferry", "motorcar": "no", "motor_vehicle": "yes"})
+    # not a ferry at all
+    assert not is_car_ferry({"highway": "primary"})
+
+
+def test_parse_duration_formats():
+    assert parse_duration("1:30") == 5400.0          # HH:MM
+    assert parse_duration("0:35") == 2100.0
+    assert parse_duration("00:35:30") == 2130.0      # HH:MM:SS
+    assert parse_duration("35") == 2100.0            # bare minutes
+    assert parse_duration("12.5") == 750.0
+    assert parse_duration(None) is None
+    assert parse_duration("") is None
+    assert parse_duration("soon") is None

@@ -138,3 +138,33 @@ def test_empty_graph_raises_not_segfault():
     import pytest
     with pytest.raises(ValueError, match="empty graph"):
         CCHRoadRouter(RoadGraphBuilder().build())
+
+
+def test_car_ferry_arc_routes_and_resists_congestion():
+    # A car ferry joins the road graph as an arc with a fixed crossing time.
+    # mainland A -> dock d1 -(ferry)- dock d2 -> island B. The route must use the
+    # ferry, and the crossing must NOT be scaled by the rush-hour speed model
+    # (its time is fixed), unlike the approach roads.
+    from datetime import datetime
+    from travelplanner.graph.road.osm import FERRY_CLASS
+
+    rush = datetime(2026, 6, 15, 8, 0)            # Monday 08:00, peak
+    b = RoadGraphBuilder(store_names=False)
+    b.add_node("A", 47.00, 8.95)
+    b.add_node("d1", 47.00, 9.00)
+    b.add_node("d2", 47.00, 9.20)                 # across water
+    b.add_node("B", 47.00, 9.25)
+    b.add_road("A", "d1", 300, highway="secondary")
+    b.add_road("d2", "B", 300, highway="secondary")
+    b.add_arc("d1", "d2", 1800, highway=FERRY_CLASS)   # 30-min crossing, both ways
+    b.add_arc("d2", "d1", 1800, highway=FERRY_CLASS)
+    g = b.build()
+
+    road = CCHRoadRouter(g).customize(rush.date(), depart_at=rush)
+    path = road.route("A", "B")
+    assert [g.key(i) for i in path.node_indices] == ["A", "d1", "d2", "B"]
+
+    # the ferry leg alone keeps its 1800s; an identical residential arc would be
+    # inflated by the congestion model.
+    ferry_only = road.route("d1", "d2")
+    assert ferry_only.seconds == 1800
