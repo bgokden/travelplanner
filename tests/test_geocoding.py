@@ -12,6 +12,7 @@ from travelplanner.geocoding import (
     cached,
     chain,
     nominatim_geocoder,
+    nominatim_search,
     resolve_city,
 )
 from travelplanner.roads import _coerce
@@ -104,3 +105,32 @@ def test_nominatim_network_error_returns_none(monkeypatch):
 def test_top_level_geocode_uses_active():
     set_geocoder(lambda n: (5.0, 6.0))
     assert tp("anything") == (5.0, 6.0)
+
+
+def _mock_urlopen(monkeypatch, payload_bytes):
+    class _Resp(io.BytesIO):
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+    monkeypatch.setattr("urllib.request.urlopen",
+                        lambda req, timeout=None: _Resp(payload_bytes))
+
+
+def test_nominatim_search_parses_candidates(monkeypatch):
+    payload = json.dumps([
+        {"display_name": "Paris, France", "lat": "48.8566", "lon": "2.3522"},
+        {"display_name": "Paris, Texas, USA", "lat": "33.6609", "lon": "-95.5555"},
+        {"lat": "1.0"},                              # malformed -> skipped
+    ]).encode()
+    _mock_urlopen(monkeypatch, payload)
+    results = nominatim_search("Paris", user_agent="test", limit=5)
+    assert [r["name"] for r in results] == ["Paris, France", "Paris, Texas, USA"]
+    assert results[0]["lat"] == 48.8566 and results[0]["lon"] == 2.3522
+
+
+def test_nominatim_search_empty_and_error(monkeypatch):
+    import urllib.error
+    assert nominatim_search("  ", user_agent="test") == []   # blank: no request
+    monkeypatch.setattr("urllib.request.urlopen",
+                        lambda req, timeout=None: (_ for _ in ()).throw(
+                            urllib.error.URLError("offline")))
+    assert nominatim_search("Paris", user_agent="test") == []   # offline-safe

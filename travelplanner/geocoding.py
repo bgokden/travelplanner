@@ -92,8 +92,22 @@ def cached(geocoder: Geocoder, *, path: Optional[str] = None) -> Geocoder:
     return resolve
 
 
-def nominatim_geocoder(*, user_agent: str,
-                       base_url: str = "https://nominatim.openstreetmap.org",
+NOMINATIM_URL = "https://nominatim.openstreetmap.org"
+
+
+def _nominatim_get(path: str, params: dict, *, user_agent: str,
+                   base_url: str, timeout: float):
+    """GET a Nominatim endpoint and return parsed JSON, or None on any error."""
+    url = f"{base_url}/{path}?{urllib.parse.urlencode(params)}"
+    req = urllib.request.Request(url, headers={"User-Agent": user_agent})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.load(resp)
+    except (urllib.error.URLError, TimeoutError, ValueError, OSError):
+        return None
+
+
+def nominatim_geocoder(*, user_agent: str, base_url: str = NOMINATIM_URL,
                        timeout: float = 10.0) -> Geocoder:
     """Online OpenStreetMap (Nominatim) geocoder. Opt-in; needs the network.
 
@@ -103,14 +117,9 @@ def nominatim_geocoder(*, user_agent: str,
     cached(...) and pre-warm at build time for production use.
     """
     def resolve(name: str) -> Optional[tuple[float, float]]:
-        query = urllib.parse.urlencode({"q": name, "format": "json", "limit": 1})
-        url = f"{base_url}/search?{query}"
-        req = urllib.request.Request(url, headers={"User-Agent": user_agent})
-        try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                data = json.load(resp)
-        except (urllib.error.URLError, TimeoutError, ValueError, OSError):
-            return None
+        data = _nominatim_get("search", {"q": name, "format": "json", "limit": 1},
+                              user_agent=user_agent, base_url=base_url,
+                              timeout=timeout)
         if not data:
             return None
         try:
@@ -118,6 +127,33 @@ def nominatim_geocoder(*, user_agent: str,
         except (KeyError, IndexError, TypeError, ValueError):
             return None
     return resolve
+
+
+def nominatim_search(query: str, *, user_agent: str, base_url: str = NOMINATIM_URL,
+                     timeout: float = 10.0, limit: int = 8) -> list[dict]:
+    """Online OSM search: up to `limit` candidate places for autocomplete.
+
+    Each candidate is {"name": display_name, "lat": float, "lon": float}. Returns
+    [] on no match or any network error (offline-safe). For typeahead, debounce
+    and cache calls to respect the Nominatim usage policy (~1 req/s; identify the
+    app via `user_agent`).
+    """
+    q = query.strip()
+    if not q:
+        return []
+    data = _nominatim_get("search", {"q": q, "format": "json", "limit": limit},
+                          user_agent=user_agent, base_url=base_url, timeout=timeout)
+    if not isinstance(data, list):
+        return []
+    results = []
+    for item in data:
+        try:
+            lat, lon = float(item["lat"]), float(item["lon"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        results.append({"name": item.get("display_name") or f"{lat:.4f}, {lon:.4f}",
+                        "lat": lat, "lon": lon})
+    return results
 
 
 _active: Geocoder = bundled_geocoder
