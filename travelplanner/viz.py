@@ -148,10 +148,20 @@ def _itinerary_segments(itinerary, geometries=None) -> list:
         mins = leg.duration.total_seconds() / 60
         label = (f"{i}. {mode}: {leg.from_loc.name} &rarr; {leg.to_loc.name} "
                  f"({leg.distance_km:.0f} km &middot; {mins:.0f} min)")
-        segments.append({"coords": coords,
+        segments.append({"coords": coords, "mode": mode,
                          "color": MODE_COLORS.get(mode, "#000000"),
                          "label": label})
     return segments
+
+
+def itinerary_segments(itinerary, geometries=None) -> list:
+    """Public per-leg map segments ({coords, mode, color, label}) for an itinerary.
+
+    The same data the itinerary map draws, exposed for callers (e.g. the demo
+    service API) that render the legs themselves. Pass `geometries` (1-based leg
+    index -> routed (lat, lon) path) to follow real road geometry on those legs.
+    """
+    return _itinerary_segments(itinerary, geometries)
 
 
 def itinerary_map_html(itinerary, *, title: str = "Trip", geometries=None) -> str:
