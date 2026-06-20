@@ -156,6 +156,21 @@ All notable changes to this project are documented here. The format is based on
   "bad input").
 
 ### Fixed
+- CSA no longer returns journeys with infeasible transfers. The scan now tracks
+  each run's boarding connection, so when a faster run improves an interior stop
+  of a ride-through, journey reconstruction still rides the boarded run from where
+  it was actually boarded instead of stitching an unchecked (possibly too-short)
+  transfer at that stop.
+- `Timetable.transfer_time` returns a 5-minute default for a stop a trip passes
+  through but that was never registered, instead of zero (which had allowed an
+  impossible same-instant vehicle-to-vehicle change); `ConnectionScan.arrival_times`
+  returns an empty dict for empty sources instead of crashing.
+- Planner ranking: `plan`/`plan_multi` no longer drop a cheaper or lower-driving
+  itinerary before the Pareto stage -- de-duplication now keys on all four axes
+  (time, cost, transfers, private-car distance) plus the mode sequence, not just
+  duration and modes. `AIR_PRIORITY` prefers an itinerary with an actual flight
+  leg rather than one whose longest leg is a flight, so a flight reached by a long
+  airport drive is still prioritized.
 - `road_router` lru_cache key normalized: `road_router(region)` and
   `road_router(region, None)` no longer build the region twice.
 - `CCHConnector` walks short hops: a stop (or a direct trip) within
