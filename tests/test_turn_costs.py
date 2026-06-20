@@ -32,6 +32,17 @@ def test_left_hand_traffic_mirrors():
     assert tc.cost(False, -90, False) == tc.favorable
 
 
+def test_hairpin_onto_other_road_is_sharp_not_uturn():
+    # A near-180 deg angle that is NOT a topological U-turn (is_uturn=False) is a
+    # hairpin onto a different road -> sharp cost, not the heavier U-turn cost.
+    tc = TurnCosts()
+    assert tc.cost(False, 170, False) == tc.sharp
+    assert tc.cost(False, 180, False) == tc.sharp
+    assert tc.sharp < tc.uturn
+    # a real U-turn (is_uturn=True) still gets the full U-turn penalty
+    assert tc.cost(True, 180, False) == tc.uturn
+
+
 # --- routing effect -------------------------------------------------------
 
 DAY = date(2026, 6, 15)

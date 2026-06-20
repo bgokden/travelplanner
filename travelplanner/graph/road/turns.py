@@ -43,8 +43,10 @@ class TurnCosts:
         m = abs(angle)
         if m <= 20.0:
             return self.straight
-        if m >= 160.0:
-            return self.uturn
+        # A true U-turn is detected topologically (the exit returns to where the
+        # approach came from) and charged self.uturn before _by_angle is reached;
+        # a near-180 deg angle here is a hairpin onto a *different* road, i.e. a
+        # sharp turn -- not a U-turn -- so it must not get the U-turn penalty.
         if m >= 135.0:
             return self.sharp
         if m <= 45.0:
