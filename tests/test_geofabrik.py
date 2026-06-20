@@ -65,3 +65,34 @@ def test_resolve_region_unknown_still_raises(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))  # no index cached
     with pytest.raises(ValueError):
         roads.resolve_region("atlantis")
+
+
+def test_geom_catalog_refresh_redownloads_each_time(tmp_path, monkeypatch):
+    """refresh=True must re-download on EVERY call, not just the first (the old
+    lru_cache(refresh) memoized refresh=True and returned a stale copy)."""
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    geofabrik._load_geom_catalog.cache_clear()
+    calls = []
+    geom = {"type": "FeatureCollection", "features": [
+        {"type": "Feature",
+         "properties": {"id": "x", "name": "X", "parent": "europe",
+                        "urls": {"pbf": "https://x/x.osm.pbf"}},
+         "geometry": {"type": "Polygon",
+                      "coordinates": [[[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]]]}}]}
+
+    def fake_download(url, dest):
+        calls.append(url)
+        with open(dest, "w", encoding="utf-8") as f:
+            json.dump(geom, f)
+
+    monkeypatch.setattr(geofabrik, "_download", fake_download)
+    try:
+        assert "x" in geofabrik._geom_catalog() and len(calls) == 1   # first build
+        geofabrik._geom_catalog()
+        assert len(calls) == 1                                          # cached
+        geofabrik._geom_catalog(refresh=True)
+        assert len(calls) == 2                                          # re-downloaded
+        geofabrik._geom_catalog(refresh=True)
+        assert len(calls) == 3                                          # AGAIN (the fix)
+    finally:
+        geofabrik._load_geom_catalog.cache_clear()

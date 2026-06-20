@@ -165,6 +165,10 @@ All notable changes to this project are documented here. The format is based on
   "bad input").
 
 ### Fixed
+- Geofabrik geometry catalog: `refresh=True` now re-downloads the index on every
+  call instead of being memoized by an `lru_cache` keyed on the flag (which had
+  re-fetched only the first time and then returned the stale cached copy). The
+  parsed catalog is still cached for the common no-refresh path.
 - GTFS loader robustness: a non-timepoint stop with empty `arrival_time`/
   `departure_time` (valid per the spec) no longer crashes the whole feed load --
   the untimed stop is dropped and the trip keeps its timed stops. A trip whose

@@ -65,3 +65,9 @@ def test_region_for_helpers(monkeypatch):
     assert gf.region_for_trip((52.5, 5.0), (50.5, 7.0)).id == "country"
     with pytest.raises(ValueError, match="cross-border|span a border|No single"):
         gf.region_for_trip((52.5, 5.0), (42.0, 13.0))
+
+
+def test_point_only_in_continent_is_not_auto_selected():
+    # (lat 41, lon 1) is inside europe only (parent=None): not auto-selected, so
+    # the caller raises rather than silently downloading the continent extract.
+    assert _smallest_containing(CATALOG, [(41.0, 1.0)]) is None

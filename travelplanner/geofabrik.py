@@ -131,9 +131,9 @@ def _normalize_polygons(geometry) -> tuple:
 
 
 @lru_cache(maxsize=1)
-def _geom_catalog(refresh: bool = False) -> dict[str, RegionGeometry]:
+def _load_geom_catalog() -> dict[str, RegionGeometry]:
     path = _geom_index_path()
-    if refresh or not os.path.exists(path):
+    if not os.path.exists(path):
         _download(GEOM_INDEX_URL, path)
     with open(path, encoding="utf-8") as f:
         data = json.load(f)
@@ -151,6 +151,17 @@ def _geom_catalog(refresh: bool = False) -> dict[str, RegionGeometry]:
                         props.get("parent"), pbf)
         out[region_id] = RegionGeometry(region, _bbox_of(polygons), polygons)
     return out
+
+
+def _geom_catalog(refresh: bool = False) -> dict[str, RegionGeometry]:
+    """The parsed geometry catalog (cached after first build). refresh=True forces
+    a fresh download and rebuild on every call -- the cache is invalidated, not
+    memoized per-flag (a plain lru_cache on `refresh` would re-download only the
+    first refresh=True and then return the stale memoized copy)."""
+    if refresh:
+        _download(GEOM_INDEX_URL, _geom_index_path())
+        _load_geom_catalog.cache_clear()
+    return _load_geom_catalog()
 
 
 def _point_in_ring(lon: float, lat: float, ring) -> bool:
@@ -179,7 +190,15 @@ def _point_in_polygons(lon: float, lat: float, polygons) -> bool:
 
 
 def _smallest_containing(geom_catalog: dict, coords) -> Region | None:
-    """Smallest non-continent region whose polygon contains every coordinate."""
+    """Smallest non-continent region whose polygon contains every coordinate.
+
+    Parent-None extracts (continents, plus country-scale aggregates like `russia`
+    and `central-america`) are skipped on purpose: they are multi-GB and must
+    never be auto-downloaded silently. A point covered only by such an extract
+    (e.g. a Russian Arctic island outside every federal-district sub-extract)
+    returns None here, and the caller raises an error telling the user to pass an
+    explicit region -- the same stance as the cross-border case.
+    """
     best = None
     for rg in geom_catalog.values():
         if rg.region.parent is None:
