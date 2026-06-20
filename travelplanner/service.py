@@ -30,6 +30,7 @@ from travelplanner.geocoding import (bundled_geocoder, cached, chain,
                                      nominatim_geocoder, nominatim_search)
 from travelplanner.models import Mode
 from travelplanner.graph.query import Objective
+from travelplanner.graph.schema import NodeType
 from travelplanner.openflights import load_airports, search_airports
 from travelplanner.roads import _coerce, drive_route
 from travelplanner.samples import sample_timetable, sample_trip
@@ -49,6 +50,22 @@ def _build_geocoder(online: bool, user_agent: str):
     if not online:
         return bundled_geocoder
     return chain(bundled_geocoder, cached(nominatim_geocoder(user_agent=user_agent)))
+
+
+def _search_stops(timetable, query: str, limit: int) -> list:
+    """Transit stops (rail/ferry, not airports) from the feed matching `query`.
+
+    Airports are offered separately from the OpenFlights index, so they are
+    excluded here. Name prefix matches rank before mere substring matches.
+    """
+    q = query.strip().lower()
+    if len(q) < 2:
+        return []
+    hits = [s for s in timetable.stops.values()
+            if s.type is not NodeType.AIRPORT and q in (s.name or "").lower()]
+    hits.sort(key=lambda s: (not (s.name or "").lower().startswith(q),
+                             (s.name or "").lower()))
+    return hits[:limit]
 
 
 def _geocode_suggestions(server, query: str, limit: int) -> list[dict]:
@@ -85,6 +102,15 @@ def _geocode_suggestions(server, query: str, limit: int) -> list[dict]:
             label += f", {air['country']}"
         out.append({"label": label, "lat": air["lat"], "lon": air["lon"],
                     "source": "airport"})
+    for stop in _search_stops(server.timetable, q, limit):
+        if len(out) >= limit:
+            break
+        ck = (round(stop.lat, 3), round(stop.lon, 3))
+        if ck in seen:
+            continue
+        seen.add(ck)
+        out.append({"label": stop.name, "lat": stop.lat, "lon": stop.lon,
+                    "source": "station"})
     cacheable = True
     if server.online and len(out) < limit:
         now = time.monotonic()
@@ -290,7 +316,8 @@ function setStatus(msg, isErr){ const s=$('status'); s.textContent=msg||'';
 function debounce(fn, ms){ let t; return (...a)=>{clearTimeout(t);
   t=setTimeout(()=>fn(...a), ms);}; }
 
-const SRC_LABEL = {city:'CITY', airport:'AIRPORT', osm:'PLACE', recent:'RECENT'};
+const SRC_LABEL = {city:'CITY', airport:'AIRPORT', station:'STATION',
+  osm:'PLACE', recent:'RECENT'};
 function getRecents(){
   try { return JSON.parse(localStorage.getItem('tp_recents') || '[]'); }
   catch(e){ return []; }                       // localStorage may be unavailable

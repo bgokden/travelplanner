@@ -100,10 +100,16 @@ def test_geocode_suggestions_bundled_then_online(monkeypatch):
         last_nominatim = 0.0
 
     srv = _Srv()
+    srv.timetable = sample_timetable()
     assert service._geocode_suggestions(srv, "a", 8) == []        # too short
     ams = service._geocode_suggestions(srv, "amsterd", 8)
     assert ams and ams[0]["label"].startswith("Amsterdam")
     assert ams[0]["source"] == "city"
+
+    # transit stops from the feed are offered (airports excluded -> handled below)
+    srv.geo_cache = {}
+    stn = service._geocode_suggestions(srv, "midvale", 8)
+    assert stn and stn[0]["source"] == "station" and "Midvale" in stn[0]["label"]
 
     # airports are offered from the (injected) airport index
     srv.geo_cache = {}
@@ -121,6 +127,15 @@ def test_geocode_suggestions_bundled_then_online(monkeypatch):
                                           "lat": 52.44, "lon": 4.83}])
     out = service._geocode_suggestions(srv, "zaandam", 8)
     assert any(s["source"] == "osm" and "Zaandam" in s["label"] for s in out)
+
+
+def test_search_stops_excludes_airports():
+    from travelplanner.service import _search_stops
+    tt = sample_timetable()
+    names = [s.name for s in _search_stops(tt, "westport", 8)]
+    assert "Westport Station" in names
+    assert "Westport Airport" not in names      # airports come from OpenFlights
+    assert _search_stops(tt, "w", 8) == []       # too short
 
 
 def _running_server():
@@ -157,6 +172,10 @@ def test_http_endpoints_end_to_end():
         sugg = json.loads(body)["suggestions"]
         assert status == 200 and any("Amsterdam" in s["label"] for s in sugg)
         assert json.loads(_get(base, "/api/geocode?q=a")[1])["suggestions"] == []
+        # transit stops from the bundled sample feed surface as STATION
+        midvale = json.loads(_get(base, "/api/geocode?q=midvale")[1])["suggestions"]
+        assert any(s["source"] == "station" and "Midvale" in s["label"]
+                   for s in midvale)
 
         query = urllib.parse.urlencode({
             "origin": example["origin"], "dest": example["dest"],
