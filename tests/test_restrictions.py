@@ -6,30 +6,101 @@ from travelplanner.graph.road.osm import resolve_restrictions
 
 def test_resolve_no_turn():
     # from-way W1 enters via node V as arc 10; to-way W2 leaves V as arc 20.
+    # A single candidate pair identifies the turn unambiguously.
     forbidden = resolve_restrictions(
-        [("W1", "V", "W2", "no")],
+        [(("W1",), "V", ("W2",), "no_left_turn")],
         arc_into={("W1", "V"): [10]},
         arc_outof={("W2", "V"): [20]},
         out_by_node={5: [20, 21, 22]},
-        node_index={"V": 5})
+        node_index={"V": 5},
+        arc_bearing={10: 0.0, 20: 270.0, 21: 90.0, 22: 180.0})
     assert forbidden == {(10, 20)}
 
 
 def test_resolve_only_turn_bans_the_others():
-    # only_* from arc 10: every out-arc of V except 20 is forbidden.
+    # only_* from arc 10: every out-arc of V except the allowed 20 is forbidden.
     forbidden = resolve_restrictions(
-        [("W1", "V", "W2", "only")],
+        [(("W1",), "V", ("W2",), "only_left_turn")],
         arc_into={("W1", "V"): [10]},
         arc_outof={("W2", "V"): [20]},
         out_by_node={5: [20, 21, 22]},
-        node_index={"V": 5})
+        node_index={"V": 5},
+        arc_bearing={10: 0.0, 20: 270.0, 21: 90.0, 22: 180.0})
     assert forbidden == {(10, 21), (10, 22)}
 
 
 def test_resolve_unresolvable_is_skipped():
     # missing arc maps -> no crash, no forbidden pair
     assert resolve_restrictions(
-        [("W1", "V", "W2", "no")], {}, {}, {}, {"V": 5}) == set()
+        [(("W1",), "V", ("W2",), "no_left_turn")], {}, {}, {}, {"V": 5}, {}) == set()
+
+
+def test_no_uturn_keeps_straight_through():
+    # Bidirectional way W through interior via V: arc_into has both approaches
+    # (A->V=0 heading east, B->V=3 heading west), arc_outof both departures
+    # (V->A=1 heading west, V->B=2 heading east). A no_u_turn must forbid only
+    # the two reversals, never the straight-through movements.
+    forbidden = resolve_restrictions(
+        [(("W",), "V", ("W",), "no_u_turn")],
+        arc_into={("W", "V"): [0, 3]},
+        arc_outof={("W", "V"): [1, 2]},
+        out_by_node={5: [1, 2]},
+        node_index={"V": 5},
+        arc_bearing={0: 90.0, 3: 270.0, 1: 270.0, 2: 90.0})
+    assert forbidden == {(0, 1), (3, 2)}        # the two U-turns
+    assert (0, 2) not in forbidden and (3, 1) not in forbidden  # straight-throughs
+
+
+def test_no_left_on_bidirectional_bans_only_matching_approach():
+    # from-way W bidirectional (A->V=0 east, B->V=3 west) turning onto to-way C
+    # (V->C=9, heading north). Only the approach that physically turns left is
+    # forbidden; the opposite approach (a right turn) stays legal.
+    forbidden = resolve_restrictions(
+        [(("W",), "V", ("C",), "no_left_turn")],
+        arc_into={("W", "V"): [0, 3]},
+        arc_outof={("C", "V"): [9]},
+        out_by_node={5: [1, 2, 9]},
+        node_index={"V": 5},
+        arc_bearing={0: 90.0, 3: 270.0, 9: 0.0})
+    assert (0, 9) in forbidden                  # east approach turning left
+    assert (3, 9) not in forbidden              # west approach's right turn legal
+
+
+def test_no_entry_forbids_every_approach():
+    # no_entry legally carries several 'from' members: no approach may enter X.
+    forbidden = resolve_restrictions(
+        [(("A1", "A2", "A3"), "V", ("X",), "no_entry")],
+        arc_into={("A1", "V"): [10], ("A2", "V"): [11], ("A3", "V"): [12]},
+        arc_outof={("X", "V"): [20]},
+        out_by_node={5: [20]},
+        node_index={"V": 5},
+        arc_bearing={10: 0.0, 11: 120.0, 12: 240.0, 20: 60.0})
+    assert forbidden == {(10, 20), (11, 20), (12, 20)}
+
+
+def test_no_exit_forbids_every_destination():
+    # no_exit legally carries several 'to' members: from A you may not exit to any.
+    forbidden = resolve_restrictions(
+        [(("A",), "V", ("X1", "X2"), "no_exit")],
+        arc_into={("A", "V"): [10]},
+        arc_outof={("X1", "V"): [20], ("X2", "V"): [21]},
+        out_by_node={5: [20, 21]},
+        node_index={"V": 5},
+        arc_bearing={10: 0.0, 20: 90.0, 21: 180.0})
+    assert forbidden == {(10, 20), (10, 21)}
+
+
+def test_only_with_absent_to_way_bans_all_other_turns():
+    # only_X but the to-way is not in the driving graph (filtered/not loaded): the
+    # one allowed turn is unavailable, so every turn from the approach is banned.
+    forbidden = resolve_restrictions(
+        [(("W",), "V", ("GONE",), "only_straight_on")],
+        arc_into={("W", "V"): [10]},
+        arc_outof={},                           # to-way absent
+        out_by_node={5: [20, 21, 22]},
+        node_index={"V": 5},
+        arc_bearing={10: 0.0, 20: 90.0, 21: 180.0, 22: 270.0})
+    assert forbidden == {(10, 20), (10, 21), (10, 22)}
 
 
 def test_restricted_turns_flow_into_expansion():

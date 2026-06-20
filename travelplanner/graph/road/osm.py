@@ -11,7 +11,7 @@ seasonal pattern, not the full OSM conditional grammar.
 
 import re
 
-from travelplanner.geo import haversine
+from travelplanner.geo import bearing, haversine, turn_angle
 from travelplanner.graph.road.model import RoadGraph, RoadGraphBuilder
 from travelplanner.graph.validity import Validity
 
@@ -38,34 +38,106 @@ _RESTRICT_ONLY = frozenset({
     "only_left_turn", "only_right_turn", "only_straight_on", "only_u_turn"})
 
 
+def _classify(value: str) -> tuple[str, str]:
+    """Split a restriction value into (kind, maneuver).
+
+    kind is "only" for only_* relations, else "no". maneuver names the physical
+    turn ("u", "left", "right", "straight"), or "any" for no_entry/no_exit (which
+    carry several from/to members and forbid every such movement).
+    """
+    kind = "only" if value.startswith("only") else "no"
+    if "u_turn" in value:
+        maneuver = "u"
+    elif "left" in value:
+        maneuver = "left"
+    elif "right" in value:
+        maneuver = "right"
+    elif "straight" in value:
+        maneuver = "straight"
+    else:
+        maneuver = "any"
+    return kind, maneuver
+
+
+def _maneuver_pairs(from_arcs, to_arcs, maneuver, arc_bearing) -> set:
+    """The (in_arc, out_arc) pairs that realize the named maneuver.
+
+    With a single candidate the relation identifies the turn unambiguously, so
+    that pair is used as-is. With several candidates -- a bidirectional way, or
+    from_way == to_way at the via, contributing arcs in both directions -- the
+    geometry (turn angle from the in-arc bearing to the out-arc bearing) selects
+    which physical turn the relation means, so legal straight-through and
+    opposite-approach movements are not over-forbidden.
+    """
+    pairs = [(i, o, turn_angle(arc_bearing[i], arc_bearing[o]))
+             for i in from_arcs for o in to_arcs]
+    if not pairs:
+        return set()
+    if len(pairs) == 1:
+        i, o, _ = pairs[0]
+        return {(i, o)}
+    if maneuver == "u":
+        return {(i, o) for i, o, a in pairs if abs(a) >= 150.0}
+    if maneuver == "straight":
+        i, o, _ = min(pairs, key=lambda p: abs(p[2]))
+        return {(i, o)}
+    if maneuver == "left":
+        lefts = [p for p in pairs if p[2] < 0.0]
+        if not lefts:
+            return set()
+        i, o, _ = min(lefts, key=lambda p: p[2])     # most-negative = sharpest left
+        return {(i, o)}
+    if maneuver == "right":
+        rights = [p for p in pairs if p[2] > 0.0]
+        if not rights:
+            return set()
+        i, o, _ = max(rights, key=lambda p: p[2])     # most-positive = sharpest right
+        return {(i, o)}
+    return {(i, o) for i, o, _ in pairs}              # "any": forbid every movement
+
+
 def resolve_restrictions(restrictions, arc_into, arc_outof, out_by_node,
-                         node_index) -> set:
+                         node_index, arc_bearing) -> set:
     """Map via-node restrictions to forbidden (in_arc, out_arc) turn pairs.
 
-    restrictions: list of (from_way, via_osm_node, to_way, kind) with kind in
-    {"no", "only"}. arc_into/arc_outof: {(way, via_osm_node): [arc indices]}
-    entering / leaving the via node on that way. out_by_node: {node_index:
-    [out-arc indices]}. node_index: {osm_node_id: internal index}.
+    restrictions: list of (from_ways, via_osm_node, to_ways, value) where
+    from_ways/to_ways are tuples of OSM way ids (no_entry/no_exit legally carry
+    several) and value is the raw OSM restriction string (e.g. "no_left_turn").
+    arc_into/arc_outof: {(way, via_osm_node): [arc indices]} entering / leaving
+    the via node on that way. out_by_node: {node_index: [out-arc indices]}.
+    node_index: {osm_node_id: internal index}. arc_bearing: {arc index: compass
+    bearing} for the arcs above, used to disambiguate the turn when a way is
+    bidirectional.
     """
     forbidden: set = set()
-    for from_way, via, to_way, kind in restrictions:
-        from_arcs = arc_into.get((from_way, via))
-        to_arcs = arc_outof.get((to_way, via))
-        if not from_arcs or not to_arcs:
+    for from_ways, via, to_ways, value in restrictions:
+        from_arcs = [a for fw in from_ways for a in arc_into.get((fw, via), ())]
+        to_arcs = [a for tw in to_ways for a in arc_outof.get((tw, via), ())]
+        if not from_arcs:
             continue
+        kind, maneuver = _classify(value)
         if kind == "no":
-            for fa in from_arcs:
-                for ta in to_arcs:
-                    forbidden.add((fa, ta))
-        else:  # only_: from this approach, every turn except to_arcs is banned
-            vidx = node_index.get(via)
-            if vidx is None:
+            if not to_arcs:
                 continue
-            allowed_out = set(to_arcs)
-            for fa in from_arcs:
-                for out_arc in out_by_node.get(vidx, ()):
-                    if out_arc not in allowed_out:
-                        forbidden.add((fa, out_arc))
+            forbidden |= _maneuver_pairs(from_arcs, to_arcs, maneuver, arc_bearing)
+            continue
+        # only_: from the matching approach, every turn but the allowed one is banned.
+        vidx = node_index.get(via)
+        if vidx is None:
+            continue
+        out_arcs_at_via = out_by_node.get(vidx, ())
+        if to_arcs:
+            allowed = _maneuver_pairs(from_arcs, to_arcs, maneuver, arc_bearing)
+            approaches = {i for i, _ in allowed}
+        else:
+            # only_X but the to-way is absent from the graph: the single allowed
+            # turn is unavailable, so every turn from each approach is forbidden.
+            allowed = set()
+            approaches = set(from_arcs)
+        for fa in approaches:
+            for out_arc in out_arcs_at_via:
+                if (fa, out_arc) not in allowed:
+                    forbidden.add((fa, out_arc))
     return forbidden
 
 _MONTHS = {m: i for i, m in enumerate(
@@ -136,7 +208,12 @@ def _is_oneway(tags: dict[str, str]) -> int:
 
 
 def _collect_restrictions(pbf_path: str) -> list:
-    """First pass: via-node turn restrictions as (from_way, via, to_way, kind)."""
+    """First pass: via-node turn restrictions as (from_ways, via, to_ways, value).
+
+    from_ways/to_ways are tuples: no_entry restrictions legally carry several
+    'from' members (no approach may enter the to-way) and no_exit several 'to'
+    members, so every member is kept rather than only the last.
+    """
     import osmium
 
     class _RelHandler(osmium.SimpleHandler):
@@ -149,22 +226,21 @@ def _collect_restrictions(pbf_path: str) -> list:
             if tags.get("type") != "restriction":
                 return
             value = tags.get("restriction")        # ignore restriction:conditional
-            if value in _RESTRICT_NO:
-                kind = "no"
-            elif value in _RESTRICT_ONLY:
-                kind = "only"
-            else:
+            if value not in _RESTRICT_NO and value not in _RESTRICT_ONLY:
                 return
-            from_way = to_way = via = None
+            from_ways: list = []
+            to_ways: list = []
+            via = None
             for m in r.members:
                 if m.type == "w" and m.role == "from":
-                    from_way = m.ref
+                    from_ways.append(m.ref)
                 elif m.type == "w" and m.role == "to":
-                    to_way = m.ref
+                    to_ways.append(m.ref)
                 elif m.role == "via":
                     via = m.ref if m.type == "n" else "way"   # via-way: skip
-            if from_way and to_way and isinstance(via, int):
-                self.restrictions.append((from_way, via, to_way, kind))
+            if from_ways and to_ways and isinstance(via, int):
+                self.restrictions.append(
+                    (tuple(from_ways), via, tuple(to_ways), value))
 
     handler = _RelHandler()
     handler.apply_file(pbf_path)
@@ -185,7 +261,7 @@ def load_road_graph(pbf_path: str,
 
     builder = RoadGraphBuilder(store_names=store_names)
     restr = _collect_restrictions(pbf_path) if turn_data else []
-    needed_ways = {fw for fw, _, _, _ in restr} | {tw for _, _, tw, _ in restr}
+    needed_ways = {w for fws, _, tws, _ in restr for w in (*fws, *tws)}
     needed_via = {via for _, via, _, _ in restr}
     arc_into: dict = {}
     arc_outof: dict = {}
@@ -248,11 +324,30 @@ def load_road_graph(pbf_path: str,
     handler.apply_file(pbf_path, locations=True)
 
     if restr:
+        # out-arcs are only needed at restriction via-nodes (for only_* turns).
+        via_indices = {builder._index[v] for v in needed_via
+                       if v in builder._index}
         out_by_node: dict = {}
         tails = builder._tail
         for i in range(len(tails)):
-            out_by_node.setdefault(tails[i], []).append(i)
+            t = tails[i]
+            if t in via_indices:
+                out_by_node.setdefault(t, []).append(i)
+        # Bearings disambiguate which physical turn a restriction means; compute
+        # them only for the arcs the restrictions actually reference.
+        needed_arcs: set = set()
+        for arcs in arc_into.values():
+            needed_arcs.update(arcs)
+        for arcs in arc_outof.values():
+            needed_arcs.update(arcs)
+        for arcs in out_by_node.values():
+            needed_arcs.update(arcs)
+        lat, lon = builder._lat, builder._lon
+        heads = builder._head
+        arc_bearing = {a: bearing(lat[tails[a]], lon[tails[a]],
+                                  lat[heads[a]], lon[heads[a]])
+                       for a in needed_arcs}
         forbidden = resolve_restrictions(restr, arc_into, arc_outof,
-                                         out_by_node, builder._index)
+                                         out_by_node, builder._index, arc_bearing)
         builder.set_restricted_turns(forbidden)
     return builder.build()
