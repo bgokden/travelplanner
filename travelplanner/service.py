@@ -21,7 +21,7 @@ the demo runs offline with no downloads. Pass a `region` (per request or via
 import argparse
 import json
 from datetime import datetime
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlparse
 
 from travelplanner.models import Mode
@@ -333,15 +333,21 @@ def make_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT, *,
                 timetable=None, region: str | None = None,
                 data_dir: str | None = None, turn_aware: bool = False,
                 geocoder=None, default_depart: datetime | None = None,
-                verbose: bool = False) -> ThreadingHTTPServer:
-    """Build (but do not start) the demo server; defaults to the sample feed."""
+                verbose: bool = False) -> HTTPServer:
+    """Build (but do not start) the demo server; defaults to the sample feed.
+
+    Single-threaded on purpose: the routingkit CCH road routers are thread-affine
+    (a cached query may only run on the thread that created it), so all requests
+    are served on one thread. Requests therefore serialise -- fine for a demo; a
+    long road-graph build blocks other requests until it finishes.
+    """
     if timetable is None:
         timetable = sample_timetable()
         if default_depart is None:
             default_depart = sample_trip()[2]
     if default_depart is None:
         default_depart = datetime.now().replace(second=0, microsecond=0)
-    server = ThreadingHTTPServer((host, port), _Handler)
+    server = HTTPServer((host, port), _Handler)
     server.timetable = timetable
     server.region = region
     server.data_dir = data_dir
