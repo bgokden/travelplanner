@@ -131,6 +131,10 @@ class ExpandedCustomized:
         """Turn-aware shortest path between two base node indices."""
         exp = self._router.expanded
         base = self._router.graph
+        if from_node == to_node:        # already there: a zero-cost stay-in-place,
+            return RoadPath(            # mirroring CCHRoadRouter.route_index for s==t
+                seconds=0, node_indices=[from_node],
+                node_keys=[base.key(from_node)], arc_indices=[])
         arc_time = self._arc_time
         best_total, best_arcs = None, None
         for s in exp.out_arcs[from_node]:

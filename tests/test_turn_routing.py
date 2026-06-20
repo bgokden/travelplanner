@@ -77,3 +77,18 @@ def test_single_arc_route():
     assert path is not None
     assert path.seconds == 100
     assert [g.key(i) for i in path.node_indices] == ["a", "b"]
+
+
+def test_self_query_is_zero():
+    # origin == destination: a zero-cost stay-in-place, not a round-trip U-turn.
+    g = _grid()
+    cust = ExpandedCCHRoadRouter(build_expanded_graph(g)).customize(
+        DAY, speed_model=FF)
+    a = g.index("a")
+    by_index = cust.route_index(a, a)
+    assert by_index is not None
+    assert by_index.seconds == 0
+    assert by_index.node_indices == [a]
+    assert by_index.arc_indices == []
+    by_key = cust.route("a", "a")
+    assert by_key.seconds == 0 and by_key.node_indices == [a]
