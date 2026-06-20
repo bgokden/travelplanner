@@ -125,6 +125,36 @@ travelplanner plan "47.0,7.0" "45.0,9.0" --gtfs feed/ --objective cheapest
 `plan` takes a `lat,lon` or a bundled city name for origin/destination; with no
 `--gtfs` it uses the bundled sample timetable.
 
+## Demo web app (map UI)
+
+An interactive map UI for trying it in the browser. It is pure standard-library
+`http.server` (no extra dependencies):
+
+```bash
+python -m travelplanner.service                       # http://127.0.0.1:8000
+python -m travelplanner.service --region switzerland  # real streets for car legs
+python -m travelplanner.service --offline             # bundled tables only, no network
+```
+
+Start typing an origin and destination to get **autocomplete** suggestions across
+bundled cities, **airports** (by name or IATA code), **transit stations** from the
+loaded feed, and OpenStreetMap **places** — or paste `lat,lon`. Pick an objective
+and access mode and the ranked itineraries draw on the map; tick *real streets*
+with a region to route car legs over the actual road network.
+
+The same thing is a JSON API you can call headless:
+
+- `GET /api/plan?origin=&dest=&depart=&objective=&access=&top=&road=&region=` —
+  ranked itineraries, each with per-leg map segments
+- `GET /api/geocode?q=` — location autocomplete suggestions
+- `GET /api/example` · `GET /api/health`
+
+Online place search uses OpenStreetMap **Nominatim** (debounced, cached, throttled
+to ~1 request/second per their usage policy); `--offline` keeps everything to the
+bundled tables. The server is single-threaded because the road routers are
+thread-affine, so a country-scale road build blocks other requests until it
+finishes.
+
 ## How air priority works
 
 `AIR_PRIORITY` prefers a flight **among non-dominated options**: if a flight is

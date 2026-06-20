@@ -256,6 +256,7 @@ _UI_HTML = """<!doctype html><html><head><meta charset="utf-8">
  .leg{font-size:12px;color:#4a5568;margin-top:3px}
  .sw{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;
    vertical-align:middle}
+ .foot{margin-top:16px;font-size:11px;color:#a0aec0;line-height:1.4}
 </style></head><body>
 <div id="app">
  <div id="side">
@@ -272,7 +273,7 @@ _UI_HTML = """<!doctype html><html><head><meta charset="utf-8">
    <div id="dest-ac" class="ac"></div>
   </div>
   <label>Depart</label>
-  <input id="depart" type="datetime-local">
+  <input id="depart" type="datetime-local" value="DEFAULT_DEPART">
   <div class="row">
    <div><label>Objective</label>
     <select id="objective">
@@ -297,6 +298,8 @@ _UI_HTML = """<!doctype html><html><head><meta charset="utf-8">
   <button id="ex" class="alt">Load example</button>
   <div id="status"></div>
   <div id="results"></div>
+  <div class="foot">Suggestions: bundled cities, airports, feed stations &amp;
+   OpenStreetMap. Itineraries are estimates over the loaded timetable.</div>
  </div>
  <div id="map"></div>
 </div>
@@ -460,8 +463,11 @@ $('ex').onclick = loadExample;
 </script></body></html>"""
 
 
-def _ui_html() -> str:
-    return _UI_HTML.replace("MODE_COLORS_JSON", json.dumps(MODE_COLORS))
+def _ui_html(default_depart: datetime | None = None) -> str:
+    depart = default_depart.strftime("%Y-%m-%dT%H:%M") if default_depart else ""
+    return (_UI_HTML
+            .replace("MODE_COLORS_JSON", json.dumps(MODE_COLORS))
+            .replace("DEFAULT_DEPART", depart))
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -481,7 +487,8 @@ class _Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
         if path in ("/", "/index.html"):
-            self._send(_ui_html().encode("utf-8"), "text/html; charset=utf-8")
+            self._send(_ui_html(self.server.default_depart).encode("utf-8"),
+                       "text/html; charset=utf-8")
         elif path == "/api/health":
             self._json({"status": "ok"})
         elif path == "/api/example":
