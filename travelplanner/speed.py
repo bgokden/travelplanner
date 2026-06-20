@@ -26,6 +26,10 @@ SpeedModel = Callable[[Optional[str], Optional[datetime]], float]
 # Highway classes that flow near the limit (vs urban/arterial streets).
 HIGHWAY_CLASSES = frozenset({"motorway", "motorway_link", "trunk", "trunk_link"})
 
+# Classes whose travel time is fixed, not a road speed (e.g. a ferry crossing,
+# timed by its OSM `duration` tag): road congestion must never scale it.
+FIXED_TIME_CLASSES = frozenset({"ferry"})
+
 # Average time multiplier vs free-flow per class (1 / typical achieved fraction).
 AVERAGE_FACTORS = {
     "motorway": 1.05, "motorway_link": 1.10,
@@ -55,6 +59,8 @@ def average_model(factors: Optional[dict] = None) -> SpeedModel:
 def _time_of_day_factor(highway: Optional[str], dt: datetime, *,
                         peak_urban: float, peak_highway: float,
                         night: float) -> float:
+    if highway in FIXED_TIME_CLASSES:
+        return 1.0          # a fixed crossing time, not a congesting road
     is_highway = highway in HIGHWAY_CLASSES
     hour = dt.hour
     if dt.weekday() < 5:  # weekday

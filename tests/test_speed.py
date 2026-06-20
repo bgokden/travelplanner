@@ -60,6 +60,15 @@ def test_time_of_day_never_beats_free_flow():
     assert tod("motorway", _weekday_at(3)) >= 1.0
 
 
+def test_ferry_class_is_congestion_exempt():
+    # A ferry's crossing time is fixed (from its OSM duration); no model -- not
+    # even the rush-hour curve -- may scale it.
+    tod = time_of_day_model()
+    assert tod("ferry", _weekday_at(8)) == 1.0     # rush hour: still 1.0
+    assert tod("ferry", _weekday_at(12)) == 1.0
+    assert average_model()("ferry", None) == 1.0
+
+
 def test_time_of_day_without_depart_falls_back_to_base():
     tod = time_of_day_model()
     assert tod("residential", None) == average_model()("residential", None)
