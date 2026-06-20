@@ -16,6 +16,11 @@ from travelplanner.models import CostLevel, Mode
 from travelplanner.graph.schema import NodeType
 from travelplanner.graph.validity import ALWAYS, Validity
 
+# Minimum time to change vehicles at a stop, used both as the per-Stop default
+# and as the fallback for a stop a trip passes through but that was never
+# registered (so an unregistered interior stop never gets a 0-second transfer).
+DEFAULT_MIN_TRANSFER = timedelta(minutes=5)
+
 
 def parse_gtfs_time(value: str) -> timedelta:
     """Parse 'HH:MM' or 'HH:MM:SS' (hours may exceed 24 for overnight trips)."""
@@ -36,7 +41,7 @@ class Stop:
     lat: float
     lon: float
     type: NodeType = NodeType.RAIL_STATION
-    min_transfer: timedelta = timedelta(minutes=5)
+    min_transfer: timedelta = DEFAULT_MIN_TRANSFER
 
 
 @dataclass(frozen=True)
@@ -118,7 +123,7 @@ class Timetable:
 
     def transfer_time(self, stop_id: str) -> timedelta:
         stop = self.stops.get(stop_id)
-        return stop.min_transfer if stop else timedelta()
+        return stop.min_transfer if stop else DEFAULT_MIN_TRANSFER
 
     def connections(self, start: datetime, end: datetime,
                     conditions: frozenset[str] = frozenset()) -> list[Connection]:

@@ -176,3 +176,50 @@ def test_unreachable_returns_none():
     tt.add_trip(make_trip("T1", Mode.TRAIN, [
         ("A", "09:00", "09:00"), ("A", "09:30", "09:30")]))  # goes nowhere useful
     assert ConnectionScan(tt).query({"A": dt(8, 0)}, "B") is None
+
+
+def test_ride_through_not_stitched_into_infeasible_transfer():
+    """A faster run that overwrites an intermediate stop must not cause the
+    boarded ride-through to be reconstructed as an infeasible transfer.
+
+    T3 rides S4->S1->S0; a faster T5 reaches S1 13:20 but the only onward hop is
+    T3's S1->S0 at 13:24 -- a 4-min change < S1's 5-min minimum. The correct (and
+    only feasible) answer is to ride T3 straight through from S4, one leg, no
+    transfer -- never the impossible T5->T3 change at S1.
+    """
+    tt = Timetable()
+    _stop(tt, "S4", transfer_min=8)
+    _stop(tt, "S1", transfer_min=5)
+    _stop(tt, "S0", transfer_min=8)
+    tt.add_trip(make_trip("T3", Mode.TRAIN, [
+        ("S4", "13:00", "13:00"), ("S1", "13:24", "13:24"), ("S0", "13:37", "13:37")]))
+    tt.add_trip(make_trip("T5", Mode.TRAIN, [
+        ("S4", "13:00", "13:00"), ("S1", "13:20", "13:20")]))
+    j = ConnectionScan(tt, horizon=timedelta(hours=6)).query({"S4": dt(12, 0)}, "S0")
+    assert j is not None
+    assert j.arrive == dt(13, 37)
+    assert j.transfers == 0                          # ridden through, not stitched
+    assert [leg.trip_id for leg in j.legs] == ["T3"]
+    assert j.legs[0].from_stop == "S4" and j.legs[0].to_stop == "S0"
+
+
+def test_unregistered_interior_stop_uses_default_transfer():
+    """A stop a trip passes through but that was never add_stop()-ed must still
+    enforce a sane change time (not zero), so an impossible 1-min change between
+    two runs at that stop is rejected."""
+    tt = Timetable()
+    _stop(tt, "A", transfer_min=10)
+    _stop(tt, "C", transfer_min=10)
+    # B is referenced by the trips below but never registered.
+    tt.add_trip(make_trip("R1", Mode.TRAIN, [("A", "09:00", "09:00"), ("B", "10:00", "10:00")]))
+    tt.add_trip(make_trip("R2", Mode.TRAIN, [("B", "10:01", "10:01"), ("C", "10:30", "10:30")]))
+    csa = ConnectionScan(tt, horizon=timedelta(hours=6))
+    # 1-min change at B < 5-min default minimum -> no same-day journey.
+    assert csa.query({"A": dt(8, 0)}, "C") is None
+
+
+def test_arrival_times_empty_sources():
+    """arrival_times({}) returns an empty dict, not a crash."""
+    tt = Timetable()
+    _stop(tt, "A")
+    assert ConnectionScan(tt).arrival_times({}) == {}

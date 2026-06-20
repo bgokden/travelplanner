@@ -108,6 +108,8 @@ class ConnectionScan:
     def _scan(self, sources: dict[str, datetime], target: str | None,
               conditions: frozenset[str],
               allowed_modes: frozenset | None = None):
+        if not sources:
+            return {}, {}
         t0 = min(sources.values())
         # Horizon is measured from each source's ready time, so the window end
         # tracks the latest source, not the earliest.
@@ -117,7 +119,7 @@ class ConnectionScan:
         arr: dict[str, datetime] = {}
         by_trip: dict[str, bool] = {}
         pred: dict[str, tuple] = {}
-        reachable: set[str] = set()
+        boarded: dict[str, Connection] = {}   # run_id -> the connection it was boarded at
 
         for stop, t in sources.items():
             if stop not in arr or t < arr[stop]:
@@ -132,7 +134,7 @@ class ConnectionScan:
                 break  # sorted by departure: nothing later can improve target
             if allowed_modes is not None and c.mode not in allowed_modes:
                 continue
-            if c.run_id not in reachable:
+            if c.run_id not in boarded:
                 ready = arr.get(c.dep_stop)
                 if ready is None:
                     continue
@@ -140,11 +142,15 @@ class ConnectionScan:
                     ready = ready + self.tt.transfer_time(c.dep_stop)
                 if ready > c.departure:
                     continue
-                reachable.add(c.run_id)
+                boarded[c.run_id] = c   # board here; this stop's readiness was just checked
             if c.arr_stop not in arr or c.arrival < arr[c.arr_stop]:
                 arr[c.arr_stop] = c.arrival
                 by_trip[c.arr_stop] = True
-                pred[c.arr_stop] = ("trip", c)
+                # Predecessor records WHERE the run was boarded, so reconstruction
+                # rides it from that stop instead of stitching through an interior
+                # stop a faster run may have overwritten (which would fabricate an
+                # unchecked, possibly infeasible transfer).
+                pred[c.arr_stop] = ("trip", boarded[c.run_id], c)
                 self._relax_footpaths(c.arr_stop, arr, by_trip, pred)
 
         return arr, pred
@@ -173,46 +179,37 @@ class ConnectionScan:
         return self._reconstruct(target, pred, arr)
 
     def _reconstruct(self, target: str, pred: dict, arr: dict) -> Journey:
+        # Each "trip" predecessor already spans a whole boarded run (boarding
+        # connection -> alighting connection), so a run is one leg and the back-
+        # pointer jumps to the boarding stop, skipping interior stops.
         steps: list[tuple] = []
         stop = target
         while pred[stop][0] != "source":
-            kind = pred[stop][0]
-            if kind == "trip":
-                c: Connection = pred[stop][1]
-                steps.append(("trip", c))
-                stop = c.dep_stop
+            entry = pred[stop]
+            if entry[0] == "trip":
+                board_c, last_c = entry[1], entry[2]
+                steps.append(("trip", board_c, last_c))
+                stop = board_c.dep_stop
             else:  # foot
-                fp = pred[stop][1]
+                fp = entry[1]
                 steps.append(("foot", fp))
                 stop = fp.from_stop
         steps.reverse()
 
         legs: list[JourneyLeg] = []
-        i = 0
-        while i < len(steps):
-            kind, payload = steps[i]
-            if kind == "foot":
-                fp = payload
+        for step in steps:
+            if step[0] == "foot":
+                fp = step[1]
                 end = arr[fp.to_stop]
                 legs.append(JourneyLeg(
                     mode=Mode.WALK, from_stop=fp.from_stop, to_stop=fp.to_stop,
                     departure=end - fp.duration, arrival=end,
                     cost_level=CostLevel.LOW, trip_id=None))
-                i += 1
-                continue
-            # merge consecutive connections on the same run into one leg
-            first: Connection = payload
-            last: Connection = payload
-            j = i + 1
-            while j < len(steps) and steps[j][0] == "trip" \
-                    and steps[j][1].run_id == first.run_id:
-                last = steps[j][1]
-                j += 1
-            legs.append(JourneyLeg(
-                mode=first.mode, from_stop=first.dep_stop,
-                to_stop=last.arr_stop, departure=first.departure,
-                arrival=last.arrival, cost_level=first.cost_level,
-                trip_id=first.trip_id))
-            i = j
-
+            else:
+                board_c, last_c = step[1], step[2]
+                legs.append(JourneyLeg(
+                    mode=board_c.mode, from_stop=board_c.dep_stop,
+                    to_stop=last_c.arr_stop, departure=board_c.departure,
+                    arrival=last_c.arrival, cost_level=board_c.cost_level,
+                    trip_id=board_c.trip_id))
         return Journey(legs=tuple(legs))
