@@ -6,7 +6,7 @@ ferry. It is enough to exercise the door-to-door planner and the different
 objectives without any external GTFS/OSM data.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from travelplanner.models import CostLevel, Location, LocationType, Mode
 from travelplanner.graph.schema import NodeType

@@ -11,7 +11,7 @@ snapping. Both expose the same methods so the planner is connector-agnostic.
 """
 
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date
 from typing import Protocol
 
 from travelplanner.geo import haversine

@@ -2,7 +2,7 @@ from datetime import date, datetime, timedelta
 
 import pytest
 
-from travelplanner.models import CostLevel, Mode
+from travelplanner.models import Mode
 from travelplanner.graph.schema import (
     Connection,
     Edge,

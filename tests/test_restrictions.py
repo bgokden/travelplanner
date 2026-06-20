@@ -1,12 +1,7 @@
 """Stage 3: OSM turn-restriction resolution + flow into the expanded graph."""
 
-from datetime import date
-
-import pytest
-
 from travelplanner.graph.road.model import RoadGraphBuilder
 from travelplanner.graph.road.osm import resolve_restrictions
-from travelplanner.graph.road.turns import build_turn_topology
 
 
 def test_resolve_no_turn():

@@ -17,7 +17,7 @@ diversification, not an exhaustive multi-label search.
 from datetime import datetime, timedelta
 
 from travelplanner.geo import haversine
-from travelplanner.models import CostLevel, Itinerary, Leg, Location, LocationType, Mode
+from travelplanner.models import Itinerary, Leg, Location, LocationType, Mode
 from travelplanner.graph.coupling.connector import AccessLeg, RoadConnector
 from travelplanner.graph.query import Objective
 from travelplanner.graph.scheduled.csa import ConnectionScan, Journey

@@ -1,7 +1,6 @@
 """Geofabrik catalog parsing + cached resolution (no network)."""
 
 import json
-import os
 
 import pytest
 

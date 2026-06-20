@@ -1,7 +1,7 @@
 """Core data types for the travel planner."""
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import Enum
 

@@ -9,7 +9,7 @@ Times are naive local; all stops here are within one timezone (Central
 European), so no cross-timezone conversion is involved.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from travelplanner import place, plan, plan_trip, Objective
 from travelplanner.models import CostLevel, LocationType, Mode

@@ -11,7 +11,7 @@ noted rather than silently dropped.
 
 import csv
 import os
-from datetime import date, timedelta
+from datetime import date
 
 from travelplanner.models import CostLevel, Mode
 from travelplanner.graph.schema import NodeType
