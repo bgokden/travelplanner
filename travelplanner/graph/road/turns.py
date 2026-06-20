@@ -16,6 +16,7 @@ from dataclasses import dataclass
 
 from travelplanner.geo import bearing, turn_angle
 from travelplanner.graph.road.model import RoadGraph
+from travelplanner.graph.road.osm import FERRY_CLASS
 
 
 @dataclass(frozen=True)
@@ -94,6 +95,14 @@ def build_turn_topology(graph, *, uturn_seconds: float = 120.0,
     tail, head = graph.tail, graph.head
     signals = getattr(graph, "signal_nodes", frozenset())
 
+    # A turn that boards or alights a ferry is not a road manoeuvre (the crossing
+    # time already covers loading), so it carries no turn/junction/U-turn cost.
+    arc_class = graph.arc_class
+    is_ferry = None
+    if arc_class is not None and FERRY_CLASS in graph.class_table:
+        ferry_class = graph.class_table.index(FERRY_CLASS)
+        is_ferry = [arc_class[a] == ferry_class for a in range(graph.arc_count)]
+
     arc_bearing = None
     is_junction = None
     if turn_costs is not None:
@@ -120,7 +129,9 @@ def build_turn_topology(graph, *, uturn_seconds: float = 120.0,
                 if (a, b) in forbidden:
                     continue
                 is_uturn = head[b] == a_from   # b returns toward a's origin
-                if turn_costs is not None:
+                if is_ferry is not None and (is_ferry[a] or is_ferry[b]):
+                    cost = 0.0       # boarding/alighting a ferry is not a turn
+                elif turn_costs is not None:
                     if is_uturn:
                         base = turn_costs.uturn
                     elif is_junction[v]:

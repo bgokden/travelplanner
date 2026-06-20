@@ -32,6 +32,37 @@ def test_left_hand_traffic_mirrors():
     assert tc.cost(False, -90, False) == tc.favorable
 
 
+def test_ferry_boarding_has_no_turn_cost():
+    # At a ferry terminal that is also a road junction, road->road still costs a
+    # turn, but boarding (road->ferry) and alighting (ferry->road) cost nothing.
+    from travelplanner.graph.road.osm import FERRY_CLASS
+    b = RoadGraphBuilder(store_names=False)
+    b.add_node("d", 47.00, 9.00)
+    b.add_node("A", 47.00, 8.98)        # road west
+    b.add_node("B", 47.00, 9.02)        # road east
+    b.add_node("F", 47.05, 9.00)        # ferry terminal across water
+    b.add_road("A", "d", 100, highway="primary")
+    b.add_road("B", "d", 100, highway="primary")
+    b.add_road("d", "F", 1800, highway=FERRY_CLASS)   # bidirectional ferry
+    g = b.build()
+    exp = build_expanded_graph(g, turn_costs=TurnCosts())
+
+    def _arc(t, h):
+        return next(i for i in range(g.arc_count)
+                    if g.tail[i] == g.index(t) and g.head[i] == g.index(h))
+
+    def _turn(a_t, a_h, b_t, b_h):
+        ai, bi = _arc(a_t, a_h), _arc(b_t, b_h)
+        for ti in range(len(exp.tail)):
+            if exp.tail[ti] == ai and exp.head[ti] == bi:
+                return exp.turn_cost[ti]
+        return None
+
+    assert _turn("A", "d", "d", "B") > 0       # road -> road: a real turn
+    assert _turn("A", "d", "d", "F") == 0      # boarding the ferry
+    assert _turn("F", "d", "d", "A") == 0      # alighting the ferry
+
+
 def test_hairpin_onto_other_road_is_sharp_not_uturn():
     # A near-180 deg angle that is NOT a topological U-turn (is_uturn=False) is a
     # hairpin onto a different road -> sharp cost, not the heavier U-turn cost.
