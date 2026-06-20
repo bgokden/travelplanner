@@ -69,7 +69,7 @@ def _road_geometries(itinerary, *, region, data_dir, depart_at, turn_aware):
         except ValueError as exc:
             warnings.append(f"road geometry unavailable for a car leg: {exc}")
             continue
-        if route.feasible and len(route.geometry) >= 2:
+        if route.drivable and len(route.geometry) >= 2:
             geometries[i] = [[lat, lon] for lat, lon in route.geometry]
     return geometries, warnings
 

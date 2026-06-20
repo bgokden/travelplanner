@@ -44,6 +44,51 @@ def test_parse_depart_formats_and_default():
         _parse_depart("not-a-time", default)
 
 
+def _car_itinerary():
+    from travelplanner.models import (CostLevel, Itinerary, Leg, Location,
+                                      LocationType, Mode)
+    from datetime import timedelta
+    a = Location("A", LocationType.CITY, 47.14, 9.52)
+    b = Location("B", LocationType.CITY, 47.07, 9.50)
+    leg = Leg(Mode.CAR, a, b, 8.0, timedelta(minutes=12), timedelta(0),
+              CostLevel.MEDIUM)
+    return Itinerary([leg], datetime(2026, 7, 1, 8, 0), 0.0)
+
+
+def test_road_geometries_attaches_routed_path(monkeypatch):
+    # _road_geometries must read the real routed path off a Route (regression:
+    # it referenced a non-existent .feasible attribute instead of .drivable).
+    import travelplanner.service as service
+    from travelplanner.roads import Route
+    from datetime import timedelta
+    geom = ((47.14, 9.52), (47.10, 9.51), (47.07, 9.50))
+
+    def fake_drive_route(origin, dest, **kwargs):
+        return Route(True, timedelta(minutes=12), 8.0, geometry=geom)
+
+    monkeypatch.setattr(service, "drive_route", fake_drive_route)
+    it = _car_itinerary()
+    geoms, warnings = service._road_geometries(
+        it, region="liechtenstein", data_dir=None, depart_at=it.depart_at,
+        turn_aware=False)
+    assert warnings == []
+    assert geoms[1] == [[47.14, 9.52], [47.10, 9.51], [47.07, 9.50]]
+
+
+def test_road_geometries_warns_when_region_unresolvable(monkeypatch):
+    import travelplanner.service as service
+
+    def boom(origin, dest, **kwargs):
+        raise ValueError("no region covers these points")
+
+    monkeypatch.setattr(service, "drive_route", boom)
+    it = _car_itinerary()
+    geoms, warnings = service._road_geometries(
+        it, region=None, data_dir=None, depart_at=it.depart_at, turn_aware=False)
+    assert geoms == {}
+    assert warnings and "no region" in warnings[0]
+
+
 def _running_server():
     server = make_server("127.0.0.1", 0)              # ephemeral port
     thread = threading.Thread(target=server.serve_forever, daemon=True)
