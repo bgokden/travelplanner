@@ -79,6 +79,16 @@ def test_single_arc_route():
     assert [g.key(i) for i in path.node_indices] == ["a", "b"]
 
 
+def test_empty_expanded_graph_raises_not_segfault():
+    # A base graph with no arcs -> an empty expanded graph; constructing the
+    # router segfaulted routingkit. It must raise a clear error instead.
+    import pytest
+    b = RoadGraphBuilder(store_names=False)
+    b.add_node("only", 47.0, 9.0)        # one node, zero arcs
+    with pytest.raises(ValueError, match="empty graph"):
+        ExpandedCCHRoadRouter(build_expanded_graph(b.build()))
+
+
 def test_self_query_is_zero():
     # origin == destination: a zero-cost stay-in-place, not a round-trip U-turn.
     g = _grid()

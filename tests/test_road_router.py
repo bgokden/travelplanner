@@ -130,3 +130,11 @@ def test_unreachable_returns_none():
     road = router.customize(date(2026, 7, 1))
     assert road.route("x", "y") is None
     assert road.route("y", "z").seconds == 600
+
+
+def test_empty_graph_raises_not_segfault():
+    # An empty graph segfaults routingkit's order construction; the router must
+    # reject it with a clear error instead of crashing the process.
+    import pytest
+    with pytest.raises(ValueError, match="empty graph"):
+        CCHRoadRouter(RoadGraphBuilder().build())

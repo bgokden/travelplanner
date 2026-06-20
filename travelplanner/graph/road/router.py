@@ -39,6 +39,10 @@ class CCHRoadRouter:
     """Phase 1: metric-independent preprocessing over a RoadGraph."""
 
     def __init__(self, graph: RoadGraph, order: list[int] | None = None) -> None:
+        if graph.node_count == 0:
+            # routingkit's order/CCH construction segfaults on a 0-node graph;
+            # reject an empty graph here with a clear error instead.
+            raise ValueError("cannot route an empty graph (no nodes)")
         self.graph = graph
         self._node_grid = None
         # routingkit needs plain lists; build them once (freed after setup).

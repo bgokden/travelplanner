@@ -24,6 +24,12 @@ _CUSTOMIZED_CACHE_MAX = 8
 
 class ExpandedCCHRoadRouter:
     def __init__(self, expanded: ExpandedRoadGraph, order: list[int] | None = None) -> None:
+        if expanded.node_count == 0:
+            # An empty expanded graph means the base graph has no arcs (e.g. a
+            # water-only extract or an `allowed` filter that matched nothing).
+            # routingkit's order/CCH construction segfaults on a 0-node graph,
+            # so reject it here with a clear error instead.
+            raise ValueError("cannot route an empty graph (base graph has no arcs)")
         self.expanded = expanded
         self.graph = expanded.base          # snapping/geometry use the base graph
         self._node_grid = None
