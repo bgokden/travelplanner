@@ -98,3 +98,48 @@ def test_seasonal_ferry_summer_only(tmp_path):
     winter = ConnectionScan(tt, horizon=timedelta(days=1)).query(
         {"X": datetime(2026, 1, 15, 10, 0)}, "Y")
     assert winter is None
+
+
+def _minimal(tmp_path, trips, stop_times, *, service="EVERY"):
+    _write(tmp_path / "stops.txt", [
+        {"stop_id": "A", "stop_name": "A", "stop_lat": "47.0", "stop_lon": "7.0"},
+        {"stop_id": "B", "stop_name": "B", "stop_lat": "46.5", "stop_lon": "7.5"},
+        {"stop_id": "C", "stop_name": "C", "stop_lat": "46.0", "stop_lon": "8.0"}])
+    _write(tmp_path / "routes.txt", [{"route_id": "R", "route_type": "2"}])
+    _write(tmp_path / "calendar.txt", [
+        {"service_id": service, "monday": "1", "tuesday": "1", "wednesday": "1",
+         "thursday": "1", "friday": "1", "saturday": "1", "sunday": "1",
+         "start_date": "20260101", "end_date": "20261231"}])
+    _write(tmp_path / "trips.txt", trips)
+    _write(tmp_path / "stop_times.txt", stop_times)
+
+
+def test_empty_interior_stop_time_does_not_crash(tmp_path):
+    """A non-timepoint interior stop with empty times must not crash the load;
+    it is dropped and the trip keeps its timed stops."""
+    _minimal(tmp_path,
+             [{"route_id": "R", "service_id": "EVERY", "trip_id": "T"}],
+             [{"trip_id": "T", "stop_sequence": "1", "stop_id": "A",
+               "arrival_time": "09:00:00", "departure_time": "09:00:00"},
+              {"trip_id": "T", "stop_sequence": "2", "stop_id": "B",
+               "arrival_time": "", "departure_time": ""},
+              {"trip_id": "T", "stop_sequence": "3", "stop_id": "C",
+               "arrival_time": "10:00:00", "departure_time": "10:00:00"}])
+    tt = load_timetable(str(tmp_path))          # must not raise
+    assert "T" in tt.trips
+    j = ConnectionScan(tt).query({"A": datetime(2026, 7, 1, 8, 0)}, "C")
+    assert j is not None and j.arrive == datetime(2026, 7, 1, 10, 0)
+
+
+def test_dangling_service_id_trip_is_dropped(tmp_path):
+    """A trip whose service_id is not defined must not run every day; it is
+    dropped rather than given an always-active empty Validity."""
+    _minimal(tmp_path,
+             [{"route_id": "R", "service_id": "GHOST", "trip_id": "T"}],  # GHOST undefined
+             [{"trip_id": "T", "stop_sequence": "1", "stop_id": "A",
+               "arrival_time": "09:00:00", "departure_time": "09:00:00"},
+              {"trip_id": "T", "stop_sequence": "2", "stop_id": "C",
+               "arrival_time": "10:00:00", "departure_time": "10:00:00"}])
+    tt = load_timetable(str(tmp_path))
+    assert "T" not in tt.trips
+    assert ConnectionScan(tt).query({"A": datetime(2026, 7, 1, 8, 0)}, "C") is None

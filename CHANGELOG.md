@@ -165,6 +165,12 @@ All notable changes to this project are documented here. The format is based on
   "bad input").
 
 ### Fixed
+- GTFS loader robustness: a non-timepoint stop with empty `arrival_time`/
+  `departure_time` (valid per the spec) no longer crashes the whole feed load --
+  the untimed stop is dropped and the trip keeps its timed stops. A trip whose
+  `service_id` is not defined in `calendar`/`calendar_dates` is now dropped
+  instead of being treated as active every day (which had created phantom trips);
+  a feed with no calendar files at all still falls back to always-active.
 - CSA no longer returns journeys with infeasible transfers. The scan now tracks
   each run's boarding connection, so when a faster run improves an interior stop
   of a ride-through, journey reconstruction still rides the boarded run from where

@@ -119,22 +119,41 @@ def load_timetable(feed_dir: str) -> Timetable:
 
     trip_meta: dict[str, tuple[Mode, Validity]] = {}
     for r in _rows(os.path.join(feed_dir, "trips.txt")):
+        sid = r["service_id"]
+        if services and sid not in services:
+            # Dangling service_id in a feed that defines services: the trip has no
+            # service days, so it never runs -- skip it rather than make it active
+            # every day via an empty Validity. (A feed with no calendar files at
+            # all still falls back to always-active below.)
+            continue
         mode = route_mode.get(r["route_id"], Mode.TRAIN)
-        validity = services.get(r["service_id"], Validity())
-        trip_meta[r["trip_id"]] = (mode, validity)
+        trip_meta[r["trip_id"]] = (mode, services.get(sid, Validity()))
 
     stop_times: dict[str, list[tuple[int, StopTime]]] = {}
     for r in _rows(os.path.join(feed_dir, "stop_times.txt")):
         tid = r["trip_id"]
+        arr_s = (r.get("arrival_time") or "").strip()
+        dep_s = (r.get("departure_time") or "").strip()
+        if not arr_s and not dep_s:
+            # A non-timepoint stop may have empty times (GTFS allows it); we do
+            # not interpolate, so drop the untimed stop and keep the timed ones.
+            continue
+        arr_s, dep_s = arr_s or dep_s, dep_s or arr_s
         st = StopTime(
             stop_id=r["stop_id"],
-            arrival=parse_gtfs_time(r["arrival_time"]),
-            departure=parse_gtfs_time(r["departure_time"]),
+            arrival=parse_gtfs_time(arr_s),
+            departure=parse_gtfs_time(dep_s),
         )
         stop_times.setdefault(tid, []).append((int(r["stop_sequence"]), st))
 
     for tid, seq in stop_times.items():
-        mode, validity = trip_meta.get(tid, (Mode.TRAIN, Validity()))
+        meta = trip_meta.get(tid)
+        if meta is None:
+            # No trip/service metadata: a dangling service_id (skipped above) or
+            # orphan stop_times with no trips.txt entry. The trip has no valid
+            # service, so do not materialize it as always-active.
+            continue
+        mode, validity = meta
         ordered = tuple(st for _, st in sorted(seq, key=lambda x: x[0]))
         if len(ordered) < 2:
             continue
