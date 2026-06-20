@@ -87,3 +87,13 @@ def test_parse_duration_formats():
     assert parse_duration(None) is None
     assert parse_duration("") is None
     assert parse_duration("soon") is None
+
+
+def test_parse_duration_rejects_nonpositive_and_signed():
+    # non-positive or signed durations are rejected so no zero/negative arc forms
+    assert parse_duration("0") is None
+    assert parse_duration("00:00:00") is None
+    assert parse_duration("-1:30") is None
+    assert parse_duration("1:-30") is None
+    assert parse_duration("-5") is None
+    assert parse_duration("1:2:3:4") is None

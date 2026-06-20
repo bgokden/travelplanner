@@ -221,25 +221,28 @@ def parse_duration(value: str | None) -> float | None:
     """Crossing time in SECONDS from an OSM `duration` tag, else None.
 
     Accepts HH:MM:SS, HH:MM (or H:MM), and a bare number of minutes ("35").
+    Non-positive or signed values (e.g. "0", "00:00:00", "-1:30") are rejected
+    (return None) so a malformed tag never yields a zero or negative arc weight.
     """
     if not value:
         return None
     value = value.strip()
     if ":" in value:
-        try:
-            nums = [float(p) for p in value.split(":")]
-        except ValueError:
+        parts = value.split(":")
+        if len(parts) not in (2, 3) or not all(
+                re.fullmatch(r"\d+(?:\.\d+)?", p) for p in parts):
             return None
+        nums = [float(p) for p in parts]
         if len(nums) == 3:
             hours, minutes, seconds = nums
-        elif len(nums) == 2:
-            hours, minutes, seconds = nums[0], nums[1], 0.0   # OSM duration=HH:MM
         else:
-            return None
-        return hours * 3600.0 + minutes * 60.0 + seconds
-    if not re.fullmatch(r"\d+(?:\.\d+)?", value):
+            hours, minutes, seconds = nums[0], nums[1], 0.0   # OSM duration=HH:MM
+        total = hours * 3600.0 + minutes * 60.0 + seconds
+    elif re.fullmatch(r"\d+(?:\.\d+)?", value):
+        total = float(value) * 60.0
+    else:
         return None
-    return float(value) * 60.0
+    return total if total > 0.0 else None
 
 
 def parse_maxspeed(value: str | None, fallback_kmh: float) -> float:
@@ -357,10 +360,14 @@ def load_road_graph(pbf_path: str,
                     pts, pts[1:], seg_km):
                 builder.add_node(a, alat, alon)
                 builder.add_node(b, blat, blon)
-                if total_secs is not None and total_km > 0.0:
-                    seconds = total_secs * dist_km / total_km
+                if total_secs is not None:
+                    # split the tagged crossing time across segments by length;
+                    # spread it evenly if the geometry is degenerate (total_km==0)
+                    seconds = (total_secs * dist_km / total_km if total_km > 0.0
+                               else total_secs / len(seg_km))
                 else:
                     seconds = dist_km / DEFAULT_FERRY_KMH * 3600.0
+                seconds = max(1.0, seconds)     # never a free/instant crossing
                 if direction >= 0:
                     builder.add_arc(a, b, seconds, validity, name, FERRY_CLASS)
                 if direction <= 0:
@@ -368,10 +375,13 @@ def load_road_graph(pbf_path: str,
 
         def way(self, w) -> None:
             tags = {t.k: t.v for t in w.tags}
+            # route=ferry wins over any highway tag (a ferry tagged highway=service
+            # is still a fixed-time crossing, not a 20 km/h road).
+            if is_car_ferry(tags):
+                self._add_ferry(w, tags)
+                return
             highway = tags.get("highway")
             if highway not in allowed:
-                if is_car_ferry(tags):
-                    self._add_ferry(w, tags)
                 return
             speed = parse_maxspeed(tags.get("maxspeed"),
                                    DEFAULT_SPEED_KMH.get(highway, 40))
