@@ -80,11 +80,9 @@ def test_default_model_auto_applies_time_of_day():
     assert m("residential", _weekday_at(8)) > 1.82        # peak -> slower, no opt-in
 
 
-# --- routing effect (needs routingkit) ------------------------------------
-routingkit = pytest.importorskip("routingkit_cch")
-
-from travelplanner.graph.road import CCHRoadRouter, RoadGraphBuilder  # noqa: E402
-from travelplanner.speed import average_model as _avg  # noqa: E402
+# --- routing effect -------------------------------------------------------
+from travelplanner.graph.road import CCHRoadRouter, RoadGraphBuilder
+from travelplanner.speed import average_model as _avg
 
 
 def _resid_graph():
@@ -155,7 +153,6 @@ def test_school_holiday_relieves_peak():
 
 
 def test_holiday_calendar_package():
-    pytest.importorskip("holidays")
     from datetime import date
     from travelplanner.speed import holiday_calendar
     cal = holiday_calendar("NL", school_holidays=[(date(2026, 7, 6), date(2026, 8, 16))])
@@ -167,7 +164,6 @@ def test_holiday_calendar_package():
 
 
 def test_holiday_calendar_package_school_germany():
-    pytest.importorskip("holidays")
     from datetime import date
     from travelplanner.speed import holiday_calendar
     # Germany exposes school holidays per Bundesland in the holidays package;

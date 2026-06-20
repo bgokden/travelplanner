@@ -1,13 +1,12 @@
 """Stage 4: geometric turn-cost classification + traffic-signal surcharge."""
 
-import dataclasses
 from datetime import date
 
-import pytest
-
-from travelplanner.geo import bearing, turn_angle
+from travelplanner.geo import turn_angle
 from travelplanner.graph.road.model import RoadGraphBuilder
 from travelplanner.graph.road.turns import TurnCosts, build_expanded_graph
+from travelplanner.graph.road.expanded import ExpandedCCHRoadRouter
+from travelplanner.speed import free_flow_model
 
 
 def test_turn_angle_sign():
@@ -33,11 +32,7 @@ def test_left_hand_traffic_mirrors():
     assert tc.cost(False, -90, False) == tc.favorable
 
 
-# --- routing effect (needs routingkit) ------------------------------------
-routingkit = pytest.importorskip("routingkit_cch")
-
-from travelplanner.graph.road.expanded import ExpandedCCHRoadRouter  # noqa: E402
-from travelplanner.speed import free_flow_model  # noqa: E402
+# --- routing effect -------------------------------------------------------
 
 DAY = date(2026, 6, 15)
 

@@ -128,8 +128,8 @@ All notable changes to this project are documented here. The format is based on
   `drive_matrix` take `depart_at=` and `speed_model=`. Applied at customization
   per interned highway class, so one artifact serves any profile/time with no
   rebuild. (Heuristic typical-day, not live traffic; pluggable for real data.)
-- Calendar-aware speed (`holiday_calendar`, optional `calendar` extra via the
-  holidays package): a public holiday collapses the rush-hour peak and a school
+- Calendar-aware speed (`holiday_calendar`, via the holidays package): a public
+  holiday collapses the rush-hour peak and a school
   holiday lightens it. School breaks come from explicit ranges, or automatically
   from the holidays package's SCHOOL category where it has data (e.g. Germany per
   Bundesland; coverage elsewhere is sparse, so supply ranges there).
@@ -141,6 +141,13 @@ All notable changes to this project are documented here. The format is based on
   resolve names offline at runtime.
 
 ### Changed
+- No more optional extras: the road engine (`routingkit-cch`, `osmium`) and the
+  calendar package (`holidays`) are now core dependencies, so `pip install
+  travelplanner` gets every feature and `pytest` runs the whole suite with nothing
+  skipped. The `road` and `calendar` extras are removed; only a `dev` extra
+  (pytest) remains. Installing now needs a C++17 compiler with OpenMP (for the
+  source-built road engine). Tests no longer gate on `pytest.importorskip`, and CI
+  fails if any test is skipped.
 - `drive()` reuses a cached customized road metric (`CCHRoadRouter.customized`)
   instead of rebuilding it per call, ~5x batch throughput; `customize()` still
   returns a fresh, mutable metric.

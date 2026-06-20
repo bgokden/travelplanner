@@ -11,10 +11,7 @@ from travelplanner.graph.road.store import (
     load_road_artifact,
     save_road_artifact,
 )
-
-routingkit = pytest.importorskip("routingkit_cch")
-
-from travelplanner.graph.road import CCHRoadRouter  # noqa: E402
+from travelplanner.graph.road import CCHRoadRouter
 
 SUMMER = Validity(calendar=ServiceCalendar(start=date(2026, 5, 1),
                                            end=date(2026, 10, 31)),

@@ -9,9 +9,8 @@ endpoints. Run it:
     python examples/trip_map.py        # writes trip_map.html
 
 For an accurate overlay where the road legs follow the streets, compute each
-ground leg's geometry with `drive_route` (needs the optional `road` extra and an
-OSM extract for the region) and pass it via `geometries=` -- see the bottom of
-this file.
+ground leg's geometry with `drive_route` (downloads an OSM extract for the region
+on first use) and pass it via `geometries=` -- see the bottom of this file.
 """
 
 from datetime import datetime
@@ -47,7 +46,7 @@ if __name__ == "__main__":
                        title="Sample trip: Amsterdam -> Vaduz (door-to-door)")
     print("wrote trip_map.html (open it in a browser)")
 
-    # Accurate road overlay (optional, needs the `road` extra + an OSM extract).
+    # Accurate road overlay (optional; downloads an OSM extract on first use).
     # Route each ground leg and map it by its 1-based leg index; the region is
     # auto-selected from the coordinates when omitted (here both ends resolve to
     # their own country extract):

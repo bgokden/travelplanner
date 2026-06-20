@@ -375,7 +375,6 @@ def test_cch_connector_turn_aware_changes_duration():
     by the edge-expanded router. The turning movement a->C->n costs more than the
     node-based estimate, and the new ExpandedCustomized.route(key,key) is what the
     connector calls."""
-    pytest.importorskip("routingkit_cch")
     from datetime import date
 
     from travelplanner.graph.road import CCHRoadRouter

@@ -7,20 +7,17 @@ Run this regularly (locally or in CI) to catch two kinds of regression:
 It is self-contained: no network and no large downloads. The road checks use a
 small synthetic graph built in memory and a temporary offline artifact, so they
 exercise build_region/road_router(data_dir)/drive/drive_matrix without OSM data.
-They are skipped (not failed) if routingkit-cch is not installed.
 
 Budgets are deliberately loose: the goal is to catch order-of-magnitude
 regressions (e.g. a per-call rebuild creeping back in), not micro-noise. Exit
 code is non-zero if any functional check fails or any budget is exceeded.
 
 Usage:
-    uv run --with routingkit-cch python bench/api_smoke.py
+    python bench/api_smoke.py
 """
 
-import sys
 import tempfile
 import time
-from datetime import date
 
 from travelplanner import (
     Objective,
@@ -34,7 +31,7 @@ from travelplanner import (
 )
 from travelplanner.graph.coupling import GeometricConnector
 
-PASS, FAIL, SKIP = "PASS", "FAIL", "SKIP"
+PASS, FAIL = "PASS", "FAIL"
 _results: list[tuple[str, str, str]] = []
 
 
@@ -67,12 +64,6 @@ def check_planner() -> None:
 
 
 def check_roads() -> None:
-    try:
-        import routingkit_cch  # noqa: F401
-    except ImportError:
-        _results.append(("road checks", SKIP, "routingkit-cch not installed"))
-        return
-
     from travelplanner.graph.road.model import RoadGraphBuilder
     from travelplanner.graph.road import CCHRoadRouter
     from travelplanner.graph.road.store import save_road_artifact

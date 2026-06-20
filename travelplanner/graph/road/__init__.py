@@ -1,9 +1,9 @@
 """travelplanner.graph.road: CCH road engine (Phase 1).
 
 The lightweight pieces (RoadGraph/RoadGraphBuilder, and the OSM parser in
-.osm) have no heavy dependencies. The CCH engine (CCHRoadRouter and friends)
-requires the `road` extra (routingkit-cch); it is imported lazily so that
-importing the model or parser does not require routingkit to be installed.
+.osm) are pure-Python. The CCH engine (CCHRoadRouter and friends) is backed by
+routingkit-cch (a core dependency); it is imported lazily so that importing the
+model or parser does not pull in the native extension until it is needed.
 """
 
 from travelplanner.graph.road.model import RoadGraph, RoadGraphBuilder

@@ -1,14 +1,9 @@
 """drive_matrix over a small offline artifact (no network/OSM download)."""
 
-import pytest
-
 from travelplanner.graph.road.model import RoadGraphBuilder
-
-routingkit = pytest.importorskip("routingkit_cch")
-
-from travelplanner.graph.road import CCHRoadRouter  # noqa: E402
-from travelplanner.graph.road.store import save_road_artifact  # noqa: E402
-from travelplanner import drive, drive_matrix, road_router  # noqa: E402
+from travelplanner.graph.road import CCHRoadRouter
+from travelplanner.graph.road.store import save_road_artifact
+from travelplanner import drive, drive_matrix, road_router
 
 
 def _artifact(tmp_path):

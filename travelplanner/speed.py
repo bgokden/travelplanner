@@ -116,7 +116,7 @@ def time_of_day_model(base: Optional[SpeedModel] = None, *,
 def holiday_calendar(country: str, subdiv: Optional[str] = None, *,
                      school_holidays=None, years=None,
                      use_package_school: bool = True):
-    """Date calendar backed by the `holidays` package (optional `calendar` extra).
+    """Date calendar backed by the `holidays` package (a core dependency).
 
     Public holidays come from `holidays.country_holidays(country, subdiv=...)`.
 
@@ -132,7 +132,7 @@ def holiday_calendar(country: str, subdiv: Optional[str] = None, *,
     for e.g. NL/FR/GB), so supply ranges for those, or use an external source.
     Pass the result as `calendar=` to time_of_day_model.
     """
-    import holidays as _holidays  # optional dependency ('calendar' extra)
+    import holidays as _holidays  # imported lazily to keep importing speed light
 
     public = _holidays.country_holidays(country, subdiv=subdiv, years=years)
 

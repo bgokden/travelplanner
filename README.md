@@ -28,15 +28,14 @@ It is built on established route-planning algorithms:
 pip install travelplanner
 ```
 
-The core (scheduled engine, coupling, heuristic estimator) is **pure standard
-library**. The road engine is optional:
+Everything is included -- there are no optional extras. One install gets the
+scheduled engine, the road engine (CCH over OpenStreetMap), the geometric
+connector, and calendar-aware speed models, so every feature works out of the
+box and nothing has to be enabled separately.
 
-```bash
-pip install "travelplanner[road]"   # adds routingkit-cch (CCH) + osmium (OSM)
-```
-
-> Note: `routingkit-cch` builds from source and needs a C++17 compiler with
-> OpenMP. The geometric connector works without it.
+> Note: the road engine pulls `routingkit-cch` and `osmium`, which build from
+> source, so installing needs a C++17 compiler with OpenMP (standard on Linux/CI;
+> on a minimal machine install build tools first).
 
 ## Quick start
 

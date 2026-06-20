@@ -2,14 +2,14 @@
 
 from datetime import datetime, timedelta
 
-import pytest
-
 from travelplanner import place
 from travelplanner.models import CostLevel, LocationType, Mode
 from travelplanner.graph.schema import NodeType
 from travelplanner.graph.scheduled import Stop, Timetable, make_trip
 from travelplanner.graph.coupling import GeometricConnector, plan
 from travelplanner.graph.validity import Validity
+from travelplanner.graph.road import CCHRoadRouter, RoadGraphBuilder
+from travelplanner.graph.coupling import CCHConnector
 
 DEP = datetime(2026, 7, 1, 8, 0)
 
@@ -115,10 +115,6 @@ def test_flight_door_to_door():
 
 
 def test_cch_connector_door_to_door():
-    routingkit = pytest.importorskip("routingkit_cch")
-    from travelplanner.graph.road import CCHRoadRouter, RoadGraphBuilder
-    from travelplanner.graph.coupling import CCHConnector
-
     b = RoadGraphBuilder()
     b.add_node("bern", 46.95, 7.44)
     b.add_node("interlaken", 46.69, 7.86)
@@ -152,10 +148,6 @@ def test_cch_connector_door_to_door():
 def test_cch_connector_access_with_default_day():
     """day=None is valid per the RoadConnector protocol (current conditions);
     CCHConnector must not crash on a seasonally-validated graph."""
-    pytest.importorskip("routingkit_cch")
-    from travelplanner.graph.road import CCHRoadRouter, RoadGraphBuilder
-    from travelplanner.graph.coupling import CCHConnector
-
     b = RoadGraphBuilder()
     b.add_node("a", 47.0, 7.0)
     b.add_node("b", 47.0, 7.05)
@@ -174,10 +166,6 @@ def test_cch_connector_access_with_default_day():
 def test_cch_connector_walks_short_hops():
     """A sub-threshold hop is WALK, not CAR (matching GeometricConnector); a
     longer hop still drives the road network."""
-    pytest.importorskip("routingkit_cch")
-    from travelplanner.graph.road import CCHRoadRouter, RoadGraphBuilder
-    from travelplanner.graph.coupling import CCHConnector
-
     b = RoadGraphBuilder()
     b.add_node("near", 47.0, 7.000)
     b.add_node("far", 47.0, 7.060)

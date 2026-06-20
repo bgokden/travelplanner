@@ -2,22 +2,17 @@
 
 from datetime import date
 
-import pytest
-
 from travelplanner.graph.road.model import RoadGraphBuilder
-
-routingkit = pytest.importorskip("routingkit_cch")
-
-from travelplanner.graph.road import CCHRoadRouter  # noqa: E402
-from travelplanner.graph.road.expanded import ExpandedCCHRoadRouter  # noqa: E402
-from travelplanner.graph.road.store import (  # noqa: E402
+from travelplanner.graph.road import CCHRoadRouter
+from travelplanner.graph.road.expanded import ExpandedCCHRoadRouter
+from travelplanner.graph.road.store import (
     load_expanded_order,
     load_road_artifact,
     save_expanded_order,
     save_road_artifact,
 )
-from travelplanner.graph.road.turns import TurnCosts, build_expanded_graph  # noqa: E402
-from travelplanner.speed import free_flow_model  # noqa: E402
+from travelplanner.graph.road.turns import TurnCosts, build_expanded_graph
+from travelplanner.speed import free_flow_model
 
 DAY = date(2026, 6, 15)
 FF = free_flow_model

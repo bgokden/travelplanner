@@ -9,9 +9,9 @@ offline and fast.
       -> DriveResult(drivable=True, duration=..., distance_km=...)
       -> DriveResult(drivable=False)   when no road connects them
 
-Requires the `road` extra (routingkit-cch + osmium) and internet for the first
-download of each region. `region` may be a known name, a Geofabrik URL, or a
-local .osm.pbf path.
+The road engine (routingkit-cch + osmium) is a core dependency, so this works
+out of the box; it just needs internet for the first download of each region.
+`region` may be a known name, a Geofabrik URL, or a local .osm.pbf path.
 
 For offline deployment, prepare a region at build time and load it with no
 network at runtime:

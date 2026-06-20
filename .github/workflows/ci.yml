@@ -17,9 +17,18 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Install (with road extra)
+      - name: Install (everything -- no optional extras)
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev,road]"
-      - name: Run tests
-        run: pytest -q
+          pip install -e ".[dev]"
+      - name: Run all tests (no skips allowed)
+        shell: bash
+        run: |
+          set -euo pipefail
+          pytest -q -rs | tee /tmp/pytest.out
+          if grep -qE '[0-9]+ skipped' /tmp/pytest.out; then
+            echo "::error::tests were skipped -- every dependency is core, nothing should skip"
+            exit 1
+          fi
+      - name: Smoke + latency bench
+        run: python bench/api_smoke.py

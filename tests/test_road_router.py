@@ -7,13 +7,8 @@ A is faster (5100s) but closes in winter; B is slower (6000s) but always open.
 
 from datetime import date
 
-import pytest
-
 from travelplanner.graph.validity import ServiceCalendar, Validity
-
-routingkit = pytest.importorskip("routingkit_cch")
-
-from travelplanner.graph.road import CCHRoadRouter, RoadGraphBuilder  # noqa: E402
+from travelplanner.graph.road import CCHRoadRouter, RoadGraphBuilder
 
 SUMMER_PASS = ServiceCalendar(start=date(2026, 5, 1), end=date(2026, 10, 31))
 
