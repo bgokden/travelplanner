@@ -20,6 +20,7 @@ import csv
 import os
 import urllib.request
 from datetime import timedelta
+from functools import lru_cache
 
 from travelplanner.geo import haversine
 from travelplanner.models import CostLevel, Mode
@@ -71,6 +72,66 @@ def _airports(path: str, keep) -> dict[str, Stop]:
             out[iata] = Stop(id=iata, name=row[1].strip() or iata,
                              lat=lat, lon=lon, type=NodeType.AIRPORT)
     return out
+
+
+def _airport_rows(path: str) -> tuple[dict, ...]:
+    """All airports with an IATA code + coords as {iata,name,city,country,lat,lon}."""
+    rows: list = []
+    with open(path, newline="", encoding="utf-8") as f:
+        for row in csv.reader(f):
+            if len(row) < 8:
+                continue
+            iata = row[4].strip()
+            if iata in _NULL:
+                continue
+            try:
+                lat, lon = float(row[6]), float(row[7])
+            except ValueError:
+                continue
+            rows.append({"iata": iata, "name": row[1].strip(),
+                         "city": row[2].strip(), "country": row[3].strip(),
+                         "lat": lat, "lon": lon})
+    return tuple(rows)
+
+
+@lru_cache(maxsize=4)
+def load_airports(path: str | None = None, *, download: bool = False) -> tuple:
+    """Airport rows for search/autocomplete (cached). Empty if data unavailable.
+
+    With no `path`, uses the shared cache copy of airports.dat; downloads it once
+    when `download=True`, otherwise returns () offline if it is not cached yet.
+    """
+    if path is None:
+        from travelplanner.roads import cache_dir
+        path = os.path.join(cache_dir(), "openflights-airports.dat")
+        if not os.path.exists(path):
+            if not download:
+                return ()
+            path = _download(AIRPORTS_URL)
+    return _airport_rows(path)
+
+
+def search_airports(query: str, *, limit: int = 8, airports=None) -> list[dict]:
+    """Airports matching `query`: exact IATA first, then name/city prefix, then any.
+
+    `airports` defaults to load_airports(); pass a row list to search a subset.
+    Returns up to `limit` rows ({iata,name,city,country,lat,lon}).
+    """
+    rows = airports if airports is not None else load_airports()
+    q = query.strip().lower()
+    if len(q) < 2:
+        return []
+    iata_hit, prefix, contains = [], [], []
+    for r in rows:
+        code, name, city = r["iata"].lower(), r["name"].lower(), r["city"].lower()
+        if code == q:
+            iata_hit.append(r)
+        elif name.startswith(q) or city.startswith(q):
+            prefix.append(r)
+        elif q in name or q in city:
+            contains.append(r)
+    prefix.sort(key=lambda r: r["name"].lower())
+    return [dict(r) for r in (iata_hit + prefix + contains)[:limit]]
 
 
 def _route_pairs(path: str, airports: dict[str, Stop]) -> set[tuple[str, str]]:

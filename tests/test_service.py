@@ -95,6 +95,7 @@ def test_geocode_suggestions_bundled_then_online(monkeypatch):
     class _Srv:
         online = False
         user_agent = "test"
+        airports = ()
         geo_cache: dict = {}
         last_nominatim = 0.0
 
@@ -102,11 +103,19 @@ def test_geocode_suggestions_bundled_then_online(monkeypatch):
     assert service._geocode_suggestions(srv, "a", 8) == []        # too short
     ams = service._geocode_suggestions(srv, "amsterd", 8)
     assert ams and ams[0]["label"].startswith("Amsterdam")
-    assert ams[0]["source"] == "bundled"
+    assert ams[0]["source"] == "city"
+
+    # airports are offered from the (injected) airport index
+    srv.geo_cache = {}
+    srv.airports = ({"iata": "AMS", "name": "Schiphol", "city": "Amsterdam",
+                     "country": "Netherlands", "lat": 52.31, "lon": 4.76},)
+    air = service._geocode_suggestions(srv, "schip", 8)
+    assert air and air[0]["source"] == "airport" and "(AMS)" in air[0]["label"]
 
     # online: a name absent from the bundled table comes from Nominatim
     srv.online = True
     srv.geo_cache = {}
+    srv.airports = ()
     monkeypatch.setattr(service, "nominatim_search",
                         lambda q, **kw: [{"name": "Zaandam, NL",
                                           "lat": 52.44, "lon": 4.83}])

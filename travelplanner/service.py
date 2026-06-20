@@ -30,6 +30,7 @@ from travelplanner.geocoding import (bundled_geocoder, cached, chain,
                                      nominatim_geocoder, nominatim_search)
 from travelplanner.models import Mode
 from travelplanner.graph.query import Objective
+from travelplanner.openflights import load_airports, search_airports
 from travelplanner.roads import _coerce, drive_route
 from travelplanner.samples import sample_timetable, sample_trip
 from travelplanner.trips import plan_trip
@@ -70,8 +71,20 @@ def _geocode_suggestions(server, query: str, limit: int) -> list[dict]:
     for row in search_cities(q, limit=limit):
         label = ", ".join(p for p in (row["name"], row["country"]) if p)
         out.append({"label": label, "lat": row["lat"], "lon": row["lon"],
-                    "source": "bundled"})
+                    "source": "city"})
         seen.add((round(row["lat"], 3), round(row["lon"], 3)))
+    for air in search_airports(q, limit=limit, airports=server.airports):
+        if len(out) >= limit:
+            break
+        ck = (round(air["lat"], 3), round(air["lon"], 3))
+        if ck in seen:
+            continue
+        seen.add(ck)
+        label = f"{air['name']} ({air['iata']})"
+        if air["country"]:
+            label += f", {air['country']}"
+        out.append({"label": label, "lat": air["lat"], "lon": air["lon"],
+                    "source": "airport"})
     cacheable = True
     if server.online and len(out) < limit:
         now = time.monotonic()
@@ -277,6 +290,18 @@ function setStatus(msg, isErr){ const s=$('status'); s.textContent=msg||'';
 function debounce(fn, ms){ let t; return (...a)=>{clearTimeout(t);
   t=setTimeout(()=>fn(...a), ms);}; }
 
+const SRC_LABEL = {city:'CITY', airport:'AIRPORT', osm:'PLACE', recent:'RECENT'};
+function getRecents(){
+  try { return JSON.parse(localStorage.getItem('tp_recents') || '[]'); }
+  catch(e){ return []; }                       // localStorage may be unavailable
+}
+function addRecent(s){
+  const r = getRecents().filter(x => x.label !== s.label);
+  r.unshift({label:s.label, lat:s.lat, lon:s.lon, source:'recent'});
+  try { localStorage.setItem('tp_recents', JSON.stringify(r.slice(0,6))); }
+  catch(e){ /* private mode / quota: skip persisting */ }
+}
+
 $('road').addEventListener('change', () => {
   $('region').style.display = $('road').checked ? 'block' : 'none';
 });
@@ -289,17 +314,19 @@ function attachAC(id){
   const hi = () => box.querySelectorAll('.it').forEach((el,i) =>
     el.classList.toggle('active', i===active));
   function choose(i){ const s=items[i]; if(!s) return;
-    input.value=s.label; selected[id]={label:s.label,lat:s.lat,lon:s.lon}; close(); }
+    input.value=s.label; selected[id]={label:s.label,lat:s.lat,lon:s.lon};
+    addRecent(s); close(); }
   function render(list){
     items=list; active=-1;
     if(!list.length){ close(); return; }
     box.innerHTML = list.map((s,i) =>
       '<div class="it" data-i="'+i+'">'+esc(s.label)
-      +'<span class="src">'+esc(s.source)+'</span></div>').join('');
+      +'<span class="src">'+(SRC_LABEL[s.source]||esc(s.source))+'</span></div>').join('');
     box.classList.add('open');
     box.querySelectorAll('.it').forEach(el =>
       el.addEventListener('mousedown', e => { e.preventDefault(); choose(+el.dataset.i); }));
   }
+  function showRecents(){ const r = getRecents(); if(r.length) render(r); else close(); }
   const fetchSugg = debounce(async () => {
     const q = input.value.trim();
     if(q.length < 2 || /^[-+]?[0-9]/.test(q)){ close(); return; }   // skip coords/short
@@ -311,8 +338,10 @@ function attachAC(id){
   }, 350);
   input.addEventListener('input', () => {
     if(selected[id] && input.value !== selected[id].label) delete selected[id];
+    if(!input.value.trim()){ showRecents(); return; }
     fetchSugg();
   });
+  input.addEventListener('focus', () => { if(!input.value.trim()) showRecents(); });
   input.addEventListener('keydown', e => {
     const open = box.classList.contains('open');
     if(open && e.key==='ArrowDown'){ e.preventDefault(); active=Math.min(active+1,items.length-1); hi(); }
@@ -508,6 +537,7 @@ def make_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT, *,
     server.geocoder = geocoder or _build_geocoder(online, user_agent)
     server.online = online
     server.user_agent = user_agent
+    server.airports = load_airports(download=online)   # cached OpenFlights airports
     server.geo_cache = {}
     server.last_nominatim = 0.0
     server.default_depart = default_depart

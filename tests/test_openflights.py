@@ -3,7 +3,8 @@
 from datetime import datetime, timedelta
 
 from travelplanner.models import Mode, CostLevel
-from travelplanner.openflights import load_openflights
+from travelplanner.openflights import (load_airports, load_openflights,
+                                       search_airports)
 from travelplanner.graph.schema import NodeType
 from travelplanner.graph.scheduled import ConnectionScan
 
@@ -91,3 +92,18 @@ def test_requires_paths_or_download(tmp_path):
     import pytest
     with pytest.raises(ValueError):
         load_openflights()                       # no paths, no download
+
+
+def test_load_and_search_airports(tmp_path):
+    a, _ = _feed(tmp_path)
+    rows = load_airports(str(a))
+    codes = {r["iata"] for r in rows}
+    assert codes == {"AMS", "ZRH"}               # the IATA-less row is skipped
+    ams = next(r for r in rows if r["iata"] == "AMS")
+    assert ams["city"] == "Amsterdam" and ams["country"] == "Netherlands"
+
+    # exact IATA match ranks first; name/city prefixes also match
+    assert search_airports("zrh", airports=rows)[0]["iata"] == "ZRH"
+    assert search_airports("schip", airports=rows)[0]["iata"] == "AMS"
+    assert search_airports("z", airports=rows) == []        # too short
+    assert search_airports("nomatch", airports=rows) == []
