@@ -225,10 +225,34 @@ def test_plan_trip_car_access_default_drives_to_airport():
     assert Mode.TRAIN not in [leg.mode for leg in best.legs]
 
 
+def test_plan_trip_access_both_shows_car_and_transit():
+    """access='both' pools car and transit candidates so BOTH the drive-to-airport
+    flight and the walk-to-train itinerary appear on one frontier."""
+    tt = _airport_train_timetable()
+    origin = place("Amsterdam centre", LocationType.HOTEL, 52.3702, 4.8952)
+    dest = place("Vaduz", LocationType.HOTEL, 47.1410, 9.5215)
+    depart = datetime(2026, 6, 17, 7, 30)
+
+    res = plan_trip(origin, dest, depart, tt, access="both", top_n=5)
+    first_legs = {it.legs[0].mode for it in res}
+    assert Mode.CAR in first_legs and Mode.WALK in first_legs   # both access modes present
+    # GREENEST leads with the no-car option
+    green = plan_trip(origin, dest, depart, tt, access="both",
+                      objective=Objective.GREENEST)[0]
+    assert not any(leg.mode is Mode.CAR for leg in green.legs)
+
+
 def test_plan_trip_access_invalid_raises():
     origin, dest, depart = sample_trip()
     with pytest.raises(ValueError):
         plan_trip(origin, dest, depart, sample_timetable(), access="bike")
+
+
+def test_plan_trip_access_both_with_road_raises():
+    origin, dest, depart = sample_trip()
+    with pytest.raises(ValueError):
+        plan_trip(origin, dest, depart, sample_timetable(),
+                  access="both", road=True)
 
 
 def test_plan_trip_transit_access_with_road_raises():

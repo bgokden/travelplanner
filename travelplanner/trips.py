@@ -23,7 +23,7 @@ from travelplanner.graph.coupling import (
     RoadConnector,
     SplitConnector,
 )
-from travelplanner.graph.coupling.planner import plan
+from travelplanner.graph.coupling.planner import plan, plan_multi
 from travelplanner.graph.query import Objective
 from travelplanner.graph.scheduled.model import Timetable
 from travelplanner.roads import _auto_region, _coerce, region_connector
@@ -76,6 +76,13 @@ def _split_connector(origin: Location, dest: Location, timetable: Timetable,
     # candidate so the frontier still has a direct option.
     return SplitConnector(access, egress,
                           direct_connector=GeometricConnector(timetable.stops))
+
+
+def _transit_connector(timetable: Timetable) -> GeometricConnector:
+    """Walk-only access: reach a stop within WALK_ACCESS_KM on foot, the rest is
+    line-haul (no car legs)."""
+    return GeometricConnector(timetable.stops, max_access_km=WALK_ACCESS_KM,
+                              walk_threshold_km=WALK_ACCESS_KM)
 
 
 def _road_connector(origin: Location, dest: Location, timetable: Timetable,
@@ -131,8 +138,11 @@ def plan_trip(origin, dest, depart_at: datetime, timetable: Timetable, *,
     `access` selects the first/last-mile mode (like a "Driving" vs "Transit" tab).
     "car" (default) drives/walks to the nearest stop. "transit" only walks to a
     stop within a short radius, so longer hops (e.g. the train to the airport) go
-    via the scheduled network -- use it for a no-car door-to-door trip. With
-    "transit" there are no car legs, so `road`/`turn_aware` do not apply.
+    via the scheduled network -- a no-car door-to-door trip. "both" pools the car
+    and transit candidates onto one frontier, so a drive-to-airport itinerary and
+    a walk-to-train one compete and you can compare them (pair with
+    `objective=GREENEST` to lead with the lower-driving one). With "transit"/"both"
+    there are no road-backed car legs, so `road`/`turn_aware` do not apply.
 
     Returns up to `top_n` Itinerary objects, best first for `objective`. An EMPTY
     list means no route exists (not an error); an invalid coordinate raises.
@@ -140,25 +150,34 @@ def plan_trip(origin, dest, depart_at: datetime, timetable: Timetable, *,
     o = _coerce(origin, geocoder=geocoder)
     d = _coerce(dest, geocoder=geocoder)
 
-    if access not in ("car", "transit"):
-        raise ValueError(f"access must be 'car' or 'transit', got {access!r}")
+    if access not in ("car", "transit", "both"):
+        raise ValueError(f"access must be 'car', 'transit', or 'both', got {access!r}")
     if turn_aware and not road:
         raise ValueError("turn_aware=True requires road=True (it tunes the road "
                          "connector; the geometric connector has no turns).")
-    if access == "transit" and road:
+    if road and access == "transit":
         raise ValueError("access='transit' has no car legs, so road=True does not "
                          "apply; drop road/turn_aware for a transit-access trip.")
+    if road and access == "both":
+        raise ValueError("access='both' uses geometric connectors; for road-backed "
+                         "car access build connectors explicitly and pass connector=.")
 
+    if connector is not None:
+        return plan(o, d, depart_at, timetable, connector,
+                    conditions=conditions, objective=objective, top_n=top_n)
+
+    if access == "both":
+        return plan_multi(o, d, depart_at, timetable,
+                          [GeometricConnector(timetable.stops),
+                           _transit_connector(timetable)],
+                          conditions=conditions, objective=objective, top_n=top_n)
+
+    if access == "transit":
+        connector = _transit_connector(timetable)
+    elif road:
+        connector = _road_connector(o, d, timetable, region, data_dir, turn_aware)
     if connector is None:
-        if access == "transit":
-            connector = GeometricConnector(timetable.stops,
-                                           max_access_km=WALK_ACCESS_KM,
-                                           walk_threshold_km=WALK_ACCESS_KM)
-        elif road:
-            connector = _road_connector(o, d, timetable, region, data_dir,
-                                        turn_aware)
-        if connector is None:
-            connector = GeometricConnector(timetable.stops)
+        connector = GeometricConnector(timetable.stops)
 
     return plan(o, d, depart_at, timetable, connector,
                 conditions=conditions, objective=objective, top_n=top_n)

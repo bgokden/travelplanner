@@ -12,10 +12,11 @@ from travelplanner.graph.coupling.connector import (
     RoadConnector,
     SplitConnector,
 )
-from travelplanner.graph.coupling.planner import plan
+from travelplanner.graph.coupling.planner import plan, plan_multi
 
 __all__ = [
     "plan",
+    "plan_multi",
     "AccessLeg",
     "RoadConnector",
     "GeometricConnector",

@@ -7,6 +7,15 @@ All notable changes to this project are documented here. The format is based on
 ## [Unreleased]
 
 ### Added
+- Access-mode diversification (`plan_trip(..., access="both")`) and the
+  underlying `plan_multi(origin, dest, depart_at, timetable, connectors, ...)`:
+  pool door-to-door candidates from several connectors before a single Pareto/
+  ranking pass, so a drive-to-airport itinerary and a walk-to-train one compete
+  on one frontier. This surfaces the transit-access option that a single
+  earliest-arrival CSA run would otherwise never generate -- so `GREENEST` now
+  leads with walk -> train -> flight while `AIR_PRIORITY` leads with the drive,
+  in the same call. (`access="both"` uses geometric connectors; for road-backed
+  car access, build connectors and pass `connector=`.)
 - `Objective.GREENEST`: ranks itineraries by least private-car distance, then
   time. Private-car distance is now a fourth Pareto criterion alongside (time,
   cost, transfers), so a low-driving option (e.g. walk -> train -> flight) stays

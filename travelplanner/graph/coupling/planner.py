@@ -173,27 +173,11 @@ def _transit_candidate(csa: ConnectionScan, origin: Location, dest: Location,
     return None
 
 
-def plan(origin: Location, dest: Location, depart_at: datetime,
-         timetable: Timetable, connector: RoadConnector, *,
-         conditions: frozenset[str] = frozenset(),
-         objective: Objective = Objective.AIR_PRIORITY,
-         top_n: int = 3,
-         horizon: timedelta = timedelta(days=2)) -> list[Itinerary]:
-    """Rank Pareto-optimal door-to-door itineraries for the given objective.
-
-    Returns a list of up to top_n Itinerary objects, best first. An EMPTY list
-    means no route exists for the date/conditions (e.g. an out-of-season ferry
-    with no road alternative) -- it is not an error. Invalid input (e.g. an
-    out-of-range coordinate) raises instead, so empty != bad input.
-
-    Each Itinerary exposes: legs (list[Leg]), depart_at / arrive_at (datetime,
-    naive local time), total_duration (timedelta; total_minutes for a float),
-    total_distance_km, primary_mode (Mode of the longest leg), cost_level
-    (CostLevel, the max over legs), and num_transfers (line-haul changes). Each
-    Leg has mode, from_loc/to_loc, distance_km, travel_time and overhead (wait)
-    timedeltas, and cost_level. Use to_dict()/to_json() or itinerary_records /
-    leg_records for JSON or tabular output.
-    """
+def _candidates(origin: Location, dest: Location, depart_at: datetime,
+                timetable: Timetable, connector: RoadConnector,
+                conditions: frozenset[str], horizon: timedelta) -> list[Itinerary]:
+    """All door-to-door candidates a single connector yields (pre-Pareto): the
+    pure-ground option plus one transit option per line-haul mode restriction."""
     day = depart_at.date()
     candidates: list[Itinerary] = []
 
@@ -215,9 +199,57 @@ def plan(origin: Location, dest: Location, depart_at: datetime,
                                       allowed)
             if itin is not None:
                 candidates.append(itin)
+    return candidates
 
+
+def _rank(candidates: list[Itinerary], objective: Objective,
+          top_n: int) -> list[Itinerary]:
+    """Pareto-filter, score, and order candidates for the objective; keep top_n."""
     frontier = _pareto(_dedupe(candidates))
     for itin in frontier:
         itin.score = itin.total_duration.total_seconds()
     frontier.sort(key=_order_key(objective))
     return frontier[:top_n]
+
+
+def plan(origin: Location, dest: Location, depart_at: datetime,
+         timetable: Timetable, connector: RoadConnector, *,
+         conditions: frozenset[str] = frozenset(),
+         objective: Objective = Objective.AIR_PRIORITY,
+         top_n: int = 3,
+         horizon: timedelta = timedelta(days=2)) -> list[Itinerary]:
+    """Rank Pareto-optimal door-to-door itineraries for the given objective.
+
+    Returns a list of up to top_n Itinerary objects, best first. An EMPTY list
+    means no route exists for the date/conditions (e.g. an out-of-season ferry
+    with no road alternative) -- it is not an error. Invalid input (e.g. an
+    out-of-range coordinate) raises instead, so empty != bad input.
+
+    Each Itinerary exposes: legs (list[Leg]), depart_at / arrive_at (datetime,
+    naive local time), total_duration (timedelta; total_minutes for a float),
+    total_distance_km, primary_mode (Mode of the longest leg), cost_level
+    (CostLevel, the max over legs), and num_transfers (line-haul changes). Each
+    Leg has mode, from_loc/to_loc, distance_km, travel_time and overhead (wait)
+    timedeltas, and cost_level. Use to_dict()/to_json() or itinerary_records /
+    leg_records for JSON or tabular output.
+    """
+    return _rank(_candidates(origin, dest, depart_at, timetable, connector,
+                             conditions, horizon), objective, top_n)
+
+
+def plan_multi(origin: Location, dest: Location, depart_at: datetime,
+               timetable: Timetable, connectors, *,
+               conditions: frozenset[str] = frozenset(),
+               objective: Objective = Objective.AIR_PRIORITY,
+               top_n: int = 3,
+               horizon: timedelta = timedelta(days=2)) -> list[Itinerary]:
+    """Like plan(), but pools candidates from SEVERAL connectors before the
+    single Pareto/ranking pass. Use it to diversify the first/last mile -- e.g. a
+    car-access and a transit-access connector -- so a drive-to-airport itinerary
+    and a walk-to-train one compete on one frontier (the latter would otherwise
+    never be generated). Same return contract as plan()."""
+    pooled: list[Itinerary] = []
+    for connector in connectors:
+        pooled += _candidates(origin, dest, depart_at, timetable, connector,
+                              conditions, horizon)
+    return _rank(pooled, objective, top_n)
