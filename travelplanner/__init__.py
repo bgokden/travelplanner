@@ -42,6 +42,7 @@ from travelplanner.graph.coupling import (
     plan_multi,
 )
 from travelplanner.trips import plan_trip
+from travelplanner.openflights import load_openflights
 from travelplanner.samples import sample_timetable, sample_trip
 from travelplanner.roads import (
     DriveResult,
@@ -95,6 +96,7 @@ __all__ = [
     "Stop",
     "make_trip",
     "load_timetable",
+    "load_openflights",
     "RoadConnector",
     "GeometricConnector",
     "CCHConnector",

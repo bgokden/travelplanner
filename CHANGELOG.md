@@ -7,6 +7,15 @@ All notable changes to this project are documented here. The format is based on
 ## [Unreleased]
 
 ### Added
+- OpenFlights flight data (`load_openflights`): build a Timetable from the open
+  OpenFlights airport + route dataset. Airports become AIRPORT stops and each
+  directed non-stop route becomes synthetic daily flights whose duration is
+  estimated from great-circle distance and a cruise speed (OpenFlights has no
+  real schedules, so the times are synthetic but the airports and route network
+  are real). Reads local `airports.dat`/`routes.dat` or fetches+caches them with
+  `download=True`; `keep={IATA, ...}` restricts to a manageable subnetwork. Fills
+  the "no bundled flight schedules" gap so the air line-haul can route over real
+  airports.
 - Sample-trip map view: render a door-to-door `plan_trip` itinerary as a
   coloured overlay on a self-contained Leaflet map. New generic
   `viz.segments_map_html`/`save_segments_map` (coloured polylines + legend) that
