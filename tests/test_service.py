@@ -89,8 +89,33 @@ def test_road_geometries_warns_when_region_unresolvable(monkeypatch):
     assert warnings and "no region" in warnings[0]
 
 
+def test_geocode_suggestions_bundled_then_online(monkeypatch):
+    import travelplanner.service as service
+
+    class _Srv:
+        online = False
+        user_agent = "test"
+        geo_cache: dict = {}
+        last_nominatim = 0.0
+
+    srv = _Srv()
+    assert service._geocode_suggestions(srv, "a", 8) == []        # too short
+    ams = service._geocode_suggestions(srv, "amsterd", 8)
+    assert ams and ams[0]["label"].startswith("Amsterdam")
+    assert ams[0]["source"] == "bundled"
+
+    # online: a name absent from the bundled table comes from Nominatim
+    srv.online = True
+    srv.geo_cache = {}
+    monkeypatch.setattr(service, "nominatim_search",
+                        lambda q, **kw: [{"name": "Zaandam, NL",
+                                          "lat": 52.44, "lon": 4.83}])
+    out = service._geocode_suggestions(srv, "zaandam", 8)
+    assert any(s["source"] == "osm" and "Zaandam" in s["label"] for s in out)
+
+
 def _running_server():
-    server = make_server("127.0.0.1", 0)              # ephemeral port
+    server = make_server("127.0.0.1", 0, online=False)   # offline: deterministic
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     return server, thread
@@ -117,6 +142,12 @@ def test_http_endpoints_end_to_end():
         status, body = _get(base, "/api/example")
         example = json.loads(body)
         assert {"origin", "dest", "depart"} <= set(example)
+
+        # autocomplete (offline server -> bundled cities)
+        status, body = _get(base, "/api/geocode?q=amsterd")
+        sugg = json.loads(body)["suggestions"]
+        assert status == 200 and any("Amsterdam" in s["label"] for s in sugg)
+        assert json.loads(_get(base, "/api/geocode?q=a")[1])["suggestions"] == []
 
         query = urllib.parse.urlencode({
             "origin": example["origin"], "dest": example["dest"],

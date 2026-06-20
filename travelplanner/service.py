@@ -20,10 +20,14 @@ the demo runs offline with no downloads. Pass a `region` (per request or via
 
 import argparse
 import json
+import time
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlparse
 
+from travelplanner.catalog import search_cities
+from travelplanner.geocoding import (bundled_geocoder, cached, chain,
+                                     nominatim_geocoder, nominatim_search)
 from travelplanner.models import Mode
 from travelplanner.graph.query import Objective
 from travelplanner.roads import _coerce, drive_route
@@ -33,6 +37,60 @@ from travelplanner.viz import MODE_COLORS, itinerary_segments
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8000
+# Identify the demo to Nominatim (required by their usage policy).
+USER_AGENT = "travelplanner-demo/1.0 (+https://github.com/bgokden/travelplanner)"
+# Nominatim asks for at most ~1 request/second; throttle network suggestions.
+_NOMINATIM_MIN_INTERVAL = 1.0
+
+
+def _build_geocoder(online: bool, user_agent: str):
+    """Single-result geocoder for planning: bundled, plus cached Nominatim online."""
+    if not online:
+        return bundled_geocoder
+    return chain(bundled_geocoder, cached(nominatim_geocoder(user_agent=user_agent)))
+
+
+def _geocode_suggestions(server, query: str, limit: int) -> list[dict]:
+    """Autocomplete candidates: bundled cities first, then OSM (online, throttled).
+
+    Returns [{"label", "lat", "lon", "source"}]. Bundled hits are instant and
+    offline; Nominatim is consulted only when the server is online, capped at one
+    request per `_NOMINATIM_MIN_INTERVAL` seconds, and results are memoised per
+    query so repeated keystrokes never re-hit the network.
+    """
+    q = query.strip()
+    if len(q) < 2:
+        return []
+    cache = server.geo_cache
+    key = (q.lower(), limit)
+    if key in cache:
+        return cache[key]
+    out: list = []
+    seen: set = set()
+    for row in search_cities(q, limit=limit):
+        label = ", ".join(p for p in (row["name"], row["country"]) if p)
+        out.append({"label": label, "lat": row["lat"], "lon": row["lon"],
+                    "source": "bundled"})
+        seen.add((round(row["lat"], 3), round(row["lon"], 3)))
+    cacheable = True
+    if server.online and len(out) < limit:
+        now = time.monotonic()
+        if now - server.last_nominatim >= _NOMINATIM_MIN_INTERVAL:
+            server.last_nominatim = now
+            for r in nominatim_search(q, user_agent=server.user_agent, limit=limit):
+                ck = (round(r["lat"], 3), round(r["lon"], 3))
+                if ck in seen:
+                    continue
+                seen.add(ck)
+                out.append({"label": r["name"], "lat": r["lat"], "lon": r["lon"],
+                            "source": "osm"})
+                if len(out) >= limit:
+                    break
+        else:
+            cacheable = False        # throttled now; let a later query try OSM
+    if cacheable:
+        cache[key] = out
+    return out
 
 _DEPART_FORMATS = ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M",
                    "%Y-%m-%d %H:%M", "%Y-%m-%d")
@@ -119,39 +177,61 @@ _UI_HTML = """<!doctype html><html><head><meta charset="utf-8">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
- html,body{height:100%;margin:0;font:14px/1.45 system-ui,sans-serif}
+ html,body{height:100%;margin:0;font:14px/1.45 system-ui,sans-serif;color:#1a202c}
  #app{display:flex;height:100%}
- #side{width:340px;min-width:340px;overflow:auto;padding:14px;box-sizing:border-box;
-   border-right:1px solid #ddd;background:#fafafa}
+ #side{width:360px;min-width:360px;overflow:auto;padding:16px;box-sizing:border-box;
+   border-right:1px solid #e2e8f0;background:#f7fafc}
  #map{flex:1}
- h1{font-size:16px;margin:0 0 10px}
- label{display:block;font-weight:600;margin:8px 0 2px;font-size:12px;color:#444}
- input,select{width:100%;padding:6px;box-sizing:border-box;border:1px solid #ccc;
-   border-radius:6px;font:inherit}
+ h1{font-size:17px;margin:0 0 4px}
+ .sub{color:#718096;font-size:12px;margin:0 0 12px}
+ label{display:block;font-weight:600;margin:10px 0 3px;font-size:12px;color:#4a5568}
+ input,select{width:100%;padding:8px;box-sizing:border-box;border:1px solid #cbd5e0;
+   border-radius:6px;font:inherit;background:#fff}
+ input:focus,select:focus{outline:0;border-color:#3182ce;box-shadow:0 0 0 2px rgba(49,130,206,.2)}
  .row{display:flex;gap:8px}.row>*{flex:1}
- .chk{display:flex;align-items:center;gap:6px;margin-top:10px;font-weight:600;font-size:12px}
+ .field{position:relative}
+ .ac{position:absolute;left:0;right:0;top:100%;z-index:1200;background:#fff;
+   border:1px solid #cbd5e0;border-top:0;border-radius:0 0 6px 6px;max-height:230px;
+   overflow:auto;box-shadow:0 8px 18px rgba(0,0,0,.14);display:none}
+ .ac.open{display:block}
+ .ac .it{padding:7px 9px;cursor:pointer;font-size:13px;border-bottom:1px solid #f0f4f8}
+ .ac .it:last-child{border-bottom:0}
+ .ac .it.active{background:#ebf2fb}
+ .ac .it .src{float:right;color:#a0aec0;font-size:9px;letter-spacing:.5px;
+   text-transform:uppercase;margin-top:2px}
+ .chk{display:flex;align-items:center;gap:6px;margin-top:12px;font-weight:600;font-size:12px}
  .chk input{width:auto}
- button{margin-top:12px;width:100%;padding:9px;border:0;border-radius:6px;
+ button{margin-top:12px;width:100%;padding:10px;border:0;border-radius:6px;
    background:#2b6cb0;color:#fff;font-weight:600;cursor:pointer}
- button.alt{background:#718096;margin-top:6px}
- #status{margin-top:10px;font-size:12px;color:#666;white-space:pre-wrap}
- .opt{border:1px solid #ddd;border-radius:8px;padding:8px;margin-top:8px;cursor:pointer;
+ button:hover{background:#2c5282} button:disabled{background:#a0aec0;cursor:default}
+ button.alt{background:#718096;margin-top:6px} button.alt:hover{background:#5a6678}
+ #status{margin-top:10px;font-size:12px;color:#718096;white-space:pre-wrap}
+ #status.err{color:#c53030}
+ .opt{border:1px solid #e2e8f0;border-radius:8px;padding:9px;margin-top:8px;cursor:pointer;
    background:#fff}
+ .opt:hover{border-color:#cbd5e0}
  .opt.sel{border-color:#2b6cb0;box-shadow:0 0 0 2px rgba(43,108,176,.2)}
- .opt .t{font-weight:700}.opt .m{color:#555;font-size:12px;margin-top:2px}
+ .opt .t{font-weight:700}.opt .m{color:#718096;font-size:12px;margin-top:2px}
  .chip{display:inline-block;padding:1px 7px;border-radius:10px;color:#fff;
-   font-size:11px;margin:2px 3px 0 0}
- .leg{font-size:12px;color:#444;margin-top:3px}
+   font-size:11px;margin:3px 3px 0 0}
+ .leg{font-size:12px;color:#4a5568;margin-top:3px}
  .sw{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;
    vertical-align:middle}
 </style></head><body>
 <div id="app">
  <div id="side">
-  <h1>travelplanner demo</h1>
-  <label>Origin (name or lat,lon)</label>
-  <input id="origin" placeholder="e.g. Zurich or 47.0,7.0">
-  <label>Destination</label>
-  <input id="dest" placeholder="e.g. Milan or 45.0,9.0">
+  <h1>travelplanner</h1>
+  <p class="sub">Type a place and pick a suggestion, or paste <code>lat,lon</code>.</p>
+  <div class="field">
+   <label>Origin</label>
+   <input id="origin" autocomplete="off" placeholder="Start typing a place...">
+   <div id="origin-ac" class="ac"></div>
+  </div>
+  <div class="field">
+   <label>Destination</label>
+   <input id="dest" autocomplete="off" placeholder="Start typing a place...">
+   <div id="dest-ac" class="ac"></div>
+  </div>
   <label>Depart</label>
   <input id="depart" type="datetime-local">
   <div class="row">
@@ -187,78 +267,136 @@ const map = L.map('map').setView([47,8], 5);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
   {maxZoom:19, attribution:'&copy; OpenStreetMap'}).addTo(map);
 let drawn = [];
-let lastData = null;
+const selected = {};                 // inputId -> {label, lat, lon}
 
 const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g,
+  c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function setStatus(msg, isErr){ const s=$('status'); s.textContent=msg||'';
+  s.className = isErr ? 'err' : ''; }
+function debounce(fn, ms){ let t; return (...a)=>{clearTimeout(t);
+  t=setTimeout(()=>fn(...a), ms);}; }
+
 $('road').addEventListener('change', () => {
   $('region').style.display = $('road').checked ? 'block' : 'none';
 });
 
+// --- autocomplete ---------------------------------------------------------
+function attachAC(id){
+  const input = $(id), box = $(id+'-ac');
+  let items = [], active = -1;
+  const close = () => { box.classList.remove('open'); box.innerHTML=''; items=[]; active=-1; };
+  const hi = () => box.querySelectorAll('.it').forEach((el,i) =>
+    el.classList.toggle('active', i===active));
+  function choose(i){ const s=items[i]; if(!s) return;
+    input.value=s.label; selected[id]={label:s.label,lat:s.lat,lon:s.lon}; close(); }
+  function render(list){
+    items=list; active=-1;
+    if(!list.length){ close(); return; }
+    box.innerHTML = list.map((s,i) =>
+      '<div class="it" data-i="'+i+'">'+esc(s.label)
+      +'<span class="src">'+esc(s.source)+'</span></div>').join('');
+    box.classList.add('open');
+    box.querySelectorAll('.it').forEach(el =>
+      el.addEventListener('mousedown', e => { e.preventDefault(); choose(+el.dataset.i); }));
+  }
+  const fetchSugg = debounce(async () => {
+    const q = input.value.trim();
+    if(q.length < 2 || /^[-+]?[0-9]/.test(q)){ close(); return; }   // skip coords/short
+    try {
+      const r = await fetch('/api/geocode?q='+encodeURIComponent(q));
+      const d = await r.json();
+      if(input.value.trim() === q) render(d.suggestions || []);
+    } catch(e){ close(); }
+  }, 350);
+  input.addEventListener('input', () => {
+    if(selected[id] && input.value !== selected[id].label) delete selected[id];
+    fetchSugg();
+  });
+  input.addEventListener('keydown', e => {
+    const open = box.classList.contains('open');
+    if(open && e.key==='ArrowDown'){ e.preventDefault(); active=Math.min(active+1,items.length-1); hi(); }
+    else if(open && e.key==='ArrowUp'){ e.preventDefault(); active=Math.max(active-1,0); hi(); }
+    else if(e.key==='Enter'){ e.preventDefault();
+      if(open && active>=0) choose(active); else plan(); }
+    else if(e.key==='Escape'){ close(); }
+  });
+  input.addEventListener('blur', () => setTimeout(close, 150));
+}
+function coordFor(id){
+  const v = $(id).value.trim(), s = selected[id];
+  return (s && v === s.label) ? (s.lat+','+s.lon) : v;   // exact coords if picked
+}
+attachAC('origin'); attachAC('dest');
+
+// --- map + results --------------------------------------------------------
 function clearMap(){ drawn.forEach(l => map.removeLayer(l)); drawn = []; }
 
 function drawOption(data, idx){
   clearMap();
-  const opt = data.options[idx];
-  const grp = [];
+  const opt = data.options[idx], grp = [];
   opt.segments.forEach(s => {
     const line = L.polyline(s.coords, {color:s.color, weight:6, opacity:.85}).addTo(map);
-    line.bindPopup(s.label);
-    drawn.push(line); grp.push(line);
+    line.bindPopup(s.label); drawn.push(line); grp.push(line);
   });
   const o = data.origin, d = data.dest;
-  drawn.push(L.marker([o.lat,o.lon]).addTo(map).bindPopup('Origin: '+o.name));
-  drawn.push(L.marker([d.lat,d.lon]).addTo(map).bindPopup('Destination: '+d.name));
+  drawn.push(L.marker([o.lat,o.lon]).addTo(map).bindPopup('Origin: '+esc(o.name)));
+  drawn.push(L.marker([d.lat,d.lon]).addTo(map).bindPopup('Destination: '+esc(d.name)));
   if(grp.length) map.fitBounds(L.featureGroup(grp).getBounds(), {padding:[40,40]});
-  document.querySelectorAll('.opt').forEach((e,i) =>
-    e.classList.toggle('sel', i===idx));
+  document.querySelectorAll('.opt').forEach((e,i) => e.classList.toggle('sel', i===idx));
 }
 
 function renderResults(data){
-  lastData = data;
   const box = $('results'); box.innerHTML = '';
-  if(!data.options.length){ box.innerHTML = '<p>No route found.</p>'; clearMap(); return; }
+  if(!data.options.length){ box.innerHTML = '<p>No route found for these inputs.</p>';
+    clearMap(); setStatus('No route found.'); return; }
   data.options.forEach((opt, i) => {
-    const div = document.createElement('div');
-    div.className = 'opt';
+    const div = document.createElement('div'); div.className = 'opt';
     const arr = new Date(opt.arrive_at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
     const modes = [...new Set(opt.legs.map(l => l.mode))].map(m =>
       '<span class="chip" style="background:'+(colors[m]||'#000')+'">'+m+'</span>').join('');
     const legs = opt.legs.map(l =>
       '<div class="leg"><span class="sw" style="background:'+(colors[l.mode]||'#000')+'"></span>'
-      + l.mode+': '+l.from.name+' → '+l.to.name
+      + esc(l.mode)+': '+esc(l.from.name)+' &rarr; '+esc(l.to.name)
       + ' ('+l.distance_km.toFixed(0)+' km)</div>').join('');
-    div.innerHTML = '<div class="t">Option '+(i+1)+' · '
+    div.innerHTML = '<div class="t">Option '+(i+1)+' &middot; '
       + Math.round(opt.total_minutes)+' min</div>'
-      + '<div class="m">'+opt.num_transfers+' transfer(s) · cost '+opt.cost_level
-      + ' · arrive '+arr+'</div><div>'+modes+'</div>'+legs;
+      + '<div class="m">'+opt.num_transfers+' transfer(s) &middot; cost '+esc(opt.cost_level)
+      + ' &middot; arrive '+arr+'</div><div>'+modes+'</div>'+legs;
     div.onclick = () => drawOption(data, i);
     box.appendChild(div);
   });
-  let st = data.options.length+' option(s).';
+  let st = data.options.length+' option(s). Click one to highlight it.';
   if(data.warnings && data.warnings.length) st += '\\n'+data.warnings.join('\\n');
-  $('status').textContent = st;
+  setStatus(st);
   drawOption(data, 0);
 }
 
 async function plan(){
-  const origin = $('origin').value.trim(), dest = $('dest').value.trim();
-  if(!origin || !dest){ $('status').textContent = 'Enter origin and destination.'; return; }
+  const origin = coordFor('origin'), dest = coordFor('dest');
+  if(!origin || !dest){ setStatus('Enter an origin and a destination.', true); return; }
   const p = new URLSearchParams({origin, dest, objective:$('objective').value,
     access:$('access').value, top:$('top').value, depart:$('depart').value});
-  if($('road').checked){ p.set('road','1'); if($('region').value.trim()) p.set('region',$('region').value.trim()); }
-  $('status').textContent = 'Planning...';
+  if($('road').checked){ p.set('road','1');
+    if($('region').value.trim()) p.set('region', $('region').value.trim()); }
+  const btn = $('go'), label = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Planning...'; setStatus('Planning...');
   try {
     const r = await fetch('/api/plan?'+p.toString());
     const data = await r.json();
-    if(!r.ok){ $('status').textContent = 'Error: '+(data.error||r.status); return; }
+    if(!r.ok){ setStatus('Error: '+(data.error||r.status), true); return; }
     renderResults(data);
-  } catch(e){ $('status').textContent = 'Request failed: '+e; }
+  } catch(e){ setStatus('Request failed: '+e, true); }
+  finally { btn.disabled = false; btn.textContent = label; }
 }
 
 async function loadExample(){
-  const r = await fetch('/api/example'); const ex = await r.json();
-  $('origin').value = ex.origin; $('dest').value = ex.dest; $('depart').value = ex.depart;
-  plan();
+  try {
+    const r = await fetch('/api/example'); const ex = await r.json();
+    delete selected.origin; delete selected.dest;
+    $('origin').value = ex.origin; $('dest').value = ex.dest; $('depart').value = ex.depart;
+    plan();
+  } catch(e){ setStatus('Could not load example: '+e, true); }
 }
 
 $('go').onclick = plan;
@@ -294,10 +432,20 @@ class _Handler(BaseHTTPRequestHandler):
             o, d, dep = sample_trip()
             self._json({"origin": f"{o.lat},{o.lon}", "dest": f"{d.lat},{d.lon}",
                         "depart": dep.strftime("%Y-%m-%dT%H:%M")})
+        elif path == "/api/geocode":
+            self._handle_geocode(parse_qs(parsed.query))
         elif path == "/api/plan":
             self._handle_plan(parse_qs(parsed.query))
         else:
             self._json({"error": "not found"}, 404)
+
+    def _handle_geocode(self, query: dict) -> None:
+        q = (query.get("q") or [""])[0]
+        try:
+            limit = max(1, min(10, int((query.get("limit") or ["8"])[0])))
+        except ValueError:
+            limit = 8
+        self._json({"suggestions": _geocode_suggestions(self.server, q, limit)})
 
     def _handle_plan(self, query: dict) -> None:
         def first(name, default=None):
@@ -332,7 +480,8 @@ class _Handler(BaseHTTPRequestHandler):
 def make_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT, *,
                 timetable=None, region: str | None = None,
                 data_dir: str | None = None, turn_aware: bool = False,
-                geocoder=None, default_depart: datetime | None = None,
+                geocoder=None, online: bool = True, user_agent: str = USER_AGENT,
+                default_depart: datetime | None = None,
                 verbose: bool = False) -> HTTPServer:
     """Build (but do not start) the demo server; defaults to the sample feed.
 
@@ -340,6 +489,10 @@ def make_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT, *,
     (a cached query may only run on the thread that created it), so all requests
     are served on one thread. Requests therefore serialise -- fine for a demo; a
     long road-graph build blocks other requests until it finishes.
+
+    `online` (default True) enables the Nominatim-backed geocoder + autocomplete
+    so arbitrary place names resolve; `online=False` stays bundled-only/offline.
+    Pass an explicit `geocoder` to override the planning geocoder entirely.
     """
     if timetable is None:
         timetable = sample_timetable()
@@ -352,7 +505,11 @@ def make_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT, *,
     server.region = region
     server.data_dir = data_dir
     server.turn_aware = turn_aware
-    server.geocoder = geocoder
+    server.geocoder = geocoder or _build_geocoder(online, user_agent)
+    server.online = online
+    server.user_agent = user_agent
+    server.geo_cache = {}
+    server.last_nominatim = 0.0
     server.default_depart = default_depart
     server.verbose = verbose
     return server
@@ -381,9 +538,11 @@ def main(argv=None) -> None:
                         help="offline road artifact dir (build_region output)")
     parser.add_argument("--turn-aware", action="store_true",
                         help="route car legs over the turn-aware graph")
+    parser.add_argument("--offline", action="store_true",
+                        help="bundled cities only; no Nominatim/network geocoding")
     args = parser.parse_args(argv)
     serve(args.host, args.port, region=args.region, data_dir=args.data_dir,
-          turn_aware=args.turn_aware)
+          turn_aware=args.turn_aware, online=not args.offline)
 
 
 if __name__ == "__main__":
