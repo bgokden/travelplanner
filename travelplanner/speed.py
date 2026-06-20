@@ -52,6 +52,8 @@ def average_model(factors: Optional[dict] = None) -> SpeedModel:
     table = AVERAGE_FACTORS if factors is None else factors
 
     def model(highway: Optional[str], depart_at: Optional[datetime]) -> float:
+        if highway in FIXED_TIME_CLASSES:
+            return 1.0
         return table.get(highway or "", 1.0)
     return model
 
@@ -59,8 +61,6 @@ def average_model(factors: Optional[dict] = None) -> SpeedModel:
 def _time_of_day_factor(highway: Optional[str], dt: datetime, *,
                         peak_urban: float, peak_highway: float,
                         night: float) -> float:
-    if highway in FIXED_TIME_CLASSES:
-        return 1.0          # a fixed crossing time, not a congesting road
     is_highway = highway in HIGHWAY_CLASSES
     hour = dt.hour
     if dt.weekday() < 5:  # weekday
@@ -103,6 +103,8 @@ def time_of_day_model(base: Optional[SpeedModel] = None, *,
     base_model = base if base is not None else average_model()
 
     def model(highway: Optional[str], depart_at: Optional[datetime]) -> float:
+        if highway in FIXED_TIME_CLASSES:
+            return 1.0          # a fixed crossing time, never congestion-scaled
         b = base_model(highway, depart_at)
         if depart_at is None:
             return b

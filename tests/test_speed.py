@@ -69,6 +69,25 @@ def test_ferry_class_is_congestion_exempt():
     assert average_model()("ferry", None) == 1.0
 
 
+def test_ferry_exempt_even_with_custom_factors_and_holiday():
+    # The exemption lives at each model's entry point, so it holds even when a
+    # custom factors table would scale 'ferry' and on the holiday/night path.
+    bad_base = average_model(factors={"ferry": 1.5, "residential": 1.82})
+    assert bad_base("ferry", None) == 1.0
+
+    class _Holiday:
+        def is_holiday(self, day):
+            return True
+
+        def school_in_session(self, day):
+            return False
+
+    tod = time_of_day_model(base=bad_base, calendar=_Holiday(), night=1.5)
+    assert tod("ferry", _weekday_at(3)) == 1.0     # holiday + night: still 1.0
+    assert tod("ferry", _weekday_at(8)) == 1.0
+    assert tod("residential", _weekday_at(3)) > 1.0   # ordinary class still scaled
+
+
 def test_time_of_day_without_depart_falls_back_to_base():
     tod = time_of_day_model()
     assert tod("residential", None) == average_model()("residential", None)
