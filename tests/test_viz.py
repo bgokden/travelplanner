@@ -10,6 +10,8 @@ from travelplanner.viz import (
     route_map_html,
     save_itinerary_map,
     save_route_map,
+    save_segments_map,
+    segments_map_html,
 )
 from travelplanner import plan_trip, sample_timetable, sample_trip
 
@@ -63,6 +65,65 @@ def test_itinerary_map_html_colors_legs_by_mode():
 def test_save_itinerary_map(tmp_path):
     path = save_itinerary_map(_itinerary(), str(tmp_path / "trip.html"))
     assert path.endswith("trip.html")
+    assert "polyline" in open(path).read()
+
+
+def test_itinerary_map_uses_supplied_geometry():
+    """A real routed path for a leg is drawn instead of the straight endpoints."""
+    it = _itinerary()
+    bend = (40.0, -3.0)   # a point not on the straight line between any endpoints
+    html = itinerary_map_html(it, geometries={1: [(it.legs[0].from_loc.lat,
+                                                   it.legs[0].from_loc.lon),
+                                                  bend,
+                                                  (it.legs[0].to_loc.lat,
+                                                   it.legs[0].to_loc.lon)]})
+    assert "[40.0, -3.0]" in html   # the routed waypoint is in the polyline
+
+
+def test_itinerary_map_ignores_too_short_geometry():
+    """An empty or single-point geometry override falls back to straight endpoints
+    (a 1-point drive_route path would otherwise draw nothing)."""
+    it = _itinerary()
+    f = it.legs[0].from_loc
+    straight = itinerary_map_html(it)
+    assert itinerary_map_html(it, geometries={1: []}) == straight
+    assert itinerary_map_html(it, geometries={1: [(f.lat, f.lon)]}) == straight
+    assert itinerary_map_html(it, geometries={99: [(0, 0), (1, 1)]}) == straight
+
+
+def test_segments_map_html_draws_each_segment():
+    segs = [{"coords": [[52.0, 4.0], [52.1, 4.1]], "color": "#2b6cb0", "label": "drive"},
+            {"coords": [[52.1, 4.1], [48.0, 9.0]], "color": "#dd6b20", "label": "fly"}]
+    html = segments_map_html(segs, title="X", header="door to door")
+    assert "leaflet" in html.lower()
+    assert "#dd6b20" in html and "door to door" in html
+    assert "[48.0, 9.0]" in html
+
+
+def test_destination_marker_uses_last_segment():
+    """The Destination marker is the final segment's last point, not leg 1's end
+    (a multi-leg door-to-door map must pin the true destination)."""
+    segs = [{"coords": [[52.0, 4.0], [52.1, 4.1]], "color": "#2b6cb0", "label": "a"},
+            {"coords": [[52.1, 4.1], [48.0, 9.0]], "color": "#dd6b20", "label": "b"}]
+    html = segments_map_html(segs)
+    assert "layers[layers.length-1].coords" in html   # destination from the last leg
+    assert "[48.0, 9.0]" in html                       # the true endpoint
+
+
+def test_segments_map_rejects_empty_coords():
+    with pytest.raises(ValueError):
+        segments_map_html([{"coords": [], "color": "#000", "label": "x"}])
+
+
+def test_segments_map_empty_raises():
+    with pytest.raises(ValueError):
+        segments_map_html([])
+
+
+def test_save_segments_map(tmp_path):
+    segs = [{"coords": [[52.0, 4.0], [52.1, 4.1]], "color": "#2b6cb0", "label": "a"}]
+    path = save_segments_map(segs, str(tmp_path / "seg.html"))
+    assert path.endswith("seg.html")
     assert "polyline" in open(path).read()
 
 

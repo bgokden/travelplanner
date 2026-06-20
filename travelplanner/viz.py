@@ -40,7 +40,9 @@ layers.forEach(l => {{
   line.bindPopup(l.label);
   group.push(line);
 }});
-const first = layers[0].coords, last0 = first[first.length-1];
+const first = layers[0].coords;
+const lastCoords = layers[layers.length-1].coords;
+const last0 = lastCoords[lastCoords.length-1];
 L.marker(first[0]).addTo(map).bindPopup('Start');
 L.marker(last0).addTo(map).bindPopup('Destination');
 map.fitBounds(L.featureGroup(group).getBounds(), {{padding:[30,30]}});
@@ -56,15 +58,15 @@ def _layer(route, label, color) -> dict:
 
 def routes_map_html(layers, *, title: str = "Routes") -> str:
     """Self-contained HTML overlaying several routes. layers = [(route, label, color)]."""
-    data, legend_rows = [], []
+    segments = []
     for route, label, color in layers:
-        data.append(_layer(route, label, color))
         mins = route.duration.total_seconds() / 60 if route.duration else 0
-        legend_rows.append(
-            f'<span class="sw" style="background:{color}"></span>'
-            f'{label}: {route.distance_km} km &middot; {mins:.0f} min')
-    return _TEMPLATE.format(title=title, legend="<br>".join(legend_rows),
-                            layers=json.dumps(data))
+        segments.append({
+            "coords": _layer(route, label, color)["coords"],   # validates geometry
+            "color": color,
+            "label": f"{label}: {route.distance_km} km &middot; {mins:.0f} min",
+        })
+    return segments_map_html(segments, title=title)
 
 
 def save_routes_map(layers, path: str, *, title: str = "Routes") -> str:
@@ -94,42 +96,82 @@ MODE_COLORS = {
 }
 
 
-def _itinerary_layers(itinerary) -> tuple[list, list]:
-    """One coloured straight segment per leg (endpoint to endpoint).
+def segments_map_html(segments, *, title: str = "Trip", header: str = "") -> str:
+    """Self-contained HTML drawing coloured polylines for arbitrary segments.
 
-    Each leg only knows its from/to coordinates (stop or endpoint), so segments
-    are straight lines between them, coloured by mode. A road-backed access leg
-    with real geometry is out of scope here; this is the door-to-door overview.
+    `segments` is a list of {"coords": [[lat, lon], ...], "color": "#hex",
+    "label": str}. `header` is an optional line shown above the per-segment
+    legend (e.g. a trip summary). This is the generic renderer the itinerary and
+    route maps build on; pass real routed geometry in `coords` for an accurate
+    overlay, or two endpoints for a straight segment.
     """
-    data, legend_rows = [], []
+    if not segments:
+        raise ValueError("no segments to draw")
+    if any(not s["coords"] for s in segments):
+        raise ValueError("every segment needs at least one coordinate")
+    rows = [f'<span class="sw" style="background:{s["color"]}"></span>{s["label"]}'
+            for s in segments]
+    legend = (f"{header}<br>" if header else "") + "<br>".join(rows)
+    layers = [{"coords": s["coords"], "color": s["color"], "label": s["label"]}
+              for s in segments]
+    return _TEMPLATE.format(title=title, legend=legend, layers=json.dumps(layers))
+
+
+def save_segments_map(segments, path: str, *, title: str = "Trip",
+                      header: str = "") -> str:
+    """Write a coloured-polyline overlay of `segments` to `path`; return the path."""
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(segments_map_html(segments, title=title, header=header))
+    return path
+
+
+def _itinerary_segments(itinerary, geometries=None) -> list:
+    """One coloured segment per leg, coloured by mode.
+
+    By default a leg is a straight line between its endpoints (a leg only knows
+    its from/to coordinates). Pass `geometries` -- a dict mapping a 1-based leg
+    index to a list of (lat, lon) points -- to draw that leg along its real
+    routed path instead (e.g. road geometry from `drive_route`).
+    """
+    geometries = geometries or {}
+    segments = []
     for i, leg in enumerate(itinerary.legs, 1):
         mode = leg.mode.value
-        color = MODE_COLORS.get(mode, "#000000")
-        coords = [[leg.from_loc.lat, leg.from_loc.lon],
-                  [leg.to_loc.lat, leg.to_loc.lon]]
+        # Use the routed path only when it is a real polyline (>= 2 points); an
+        # empty or single-point geometry (e.g. a zero-distance drive_route) falls
+        # back to the straight endpoints rather than drawing an invisible segment.
+        if i in geometries and len(geometries[i]) >= 2:
+            coords = [[lat, lon] for lat, lon in geometries[i]]
+        else:
+            coords = [[leg.from_loc.lat, leg.from_loc.lon],
+                      [leg.to_loc.lat, leg.to_loc.lon]]
         mins = leg.duration.total_seconds() / 60
         label = (f"{i}. {mode}: {leg.from_loc.name} &rarr; {leg.to_loc.name} "
                  f"({leg.distance_km:.0f} km &middot; {mins:.0f} min)")
-        data.append({"coords": coords, "color": color, "label": label})
-        legend_rows.append(
-            f'<span class="sw" style="background:{color}"></span>{label}')
-    return data, legend_rows
+        segments.append({"coords": coords,
+                         "color": MODE_COLORS.get(mode, "#000000"),
+                         "label": label})
+    return segments
 
 
-def itinerary_map_html(itinerary, *, title: str = "Trip") -> str:
-    """Self-contained HTML drawing one door-to-door itinerary's legs by mode."""
-    data, legend_rows = _itinerary_layers(itinerary)
-    if not data:
+def itinerary_map_html(itinerary, *, title: str = "Trip", geometries=None) -> str:
+    """Self-contained HTML drawing one door-to-door itinerary's legs by mode.
+
+    `geometries` optionally maps a 1-based leg index to its real routed (lat, lon)
+    path so road legs follow the streets; legs without geometry are straight.
+    """
+    if not itinerary.legs:
         raise ValueError("itinerary has no legs to draw")
     arrive = itinerary.arrive_at.strftime("%H:%M")
-    head = (f'{itinerary.depart_at.strftime("%a %H:%M")} &rarr; {arrive} '
-            f'&middot; {itinerary.total_minutes:.0f} min')
-    legend = head + "<br>" + "<br>".join(legend_rows)
-    return _TEMPLATE.format(title=title, legend=legend, layers=json.dumps(data))
+    header = (f'{itinerary.depart_at.strftime("%a %H:%M")} &rarr; {arrive} '
+              f'&middot; {itinerary.total_minutes:.0f} min')
+    return segments_map_html(_itinerary_segments(itinerary, geometries),
+                             title=title, header=header)
 
 
-def save_itinerary_map(itinerary, path: str, *, title: str = "Trip") -> str:
+def save_itinerary_map(itinerary, path: str, *, title: str = "Trip",
+                       geometries=None) -> str:
     """Write a multimodal itinerary map to `path`; return the path."""
     with open(path, "w", encoding="utf-8") as f:
-        f.write(itinerary_map_html(itinerary, title=title))
+        f.write(itinerary_map_html(itinerary, title=title, geometries=geometries))
     return path

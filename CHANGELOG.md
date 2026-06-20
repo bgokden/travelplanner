@@ -7,6 +7,16 @@ All notable changes to this project are documented here. The format is based on
 ## [Unreleased]
 
 ### Added
+- Sample-trip map view: render a door-to-door `plan_trip` itinerary as a
+  coloured overlay on a self-contained Leaflet map. New generic
+  `viz.segments_map_html`/`save_segments_map` (coloured polylines + legend) that
+  the itinerary and route maps now share, and a `geometries=` override on
+  `itinerary_map_html`/`save_itinerary_map` mapping a 1-based leg index to its
+  real routed `(lat, lon)` path -- so road legs follow the streets (e.g. from
+  `drive_route`) while `viz` stays road-engine-free; legs without geometry stay
+  straight. Fixed the door-to-door Destination marker (now the last leg's
+  endpoint, not the first leg's) and made `routes_map_html` ride on the shared
+  renderer. Runnable `examples/trip_map.py` builds and writes a sample map.
 - Asymmetric first/last mile (`plan_trip(..., access="transit", egress="car")`):
   `egress` overrides the last-mile mode independently of `access` (default: same
   as access), built as a `SplitConnector` delegating each end to its own mode
