@@ -35,6 +35,11 @@ _NODE_TO_LOCATION = {
 }
 _VEHICLE_MODES = frozenset({Mode.TRAIN, Mode.FERRY, Mode.FLIGHT})
 
+# A walk-only (footpath-chain) journey beyond this is not a realistic transit
+# option (footpaths are transitively closed with no cap, so a mis-imported chain
+# could otherwise surface as a 100+ km "walk"). Shorter footpath routes are kept.
+_MAX_WALK_ONLY_KM = 10.0
+
 # Line-haul mode restrictions used to diversify candidates.
 _MODE_SETS = (
     None,                                   # all modes (earliest arrival)
@@ -230,19 +235,28 @@ def _transit_candidate(csa: ConnectionScan, origin: Location, dest: Location,
         journey = csa.query(sources, e_stop, conditions, allowed_modes)
         if journey is None:
             continue
-        # Skip a journey reached purely by footpaths (no vehicle leg): it bypasses
-        # the mode restriction and would surface a long pure-walk "transit" option
-        # (the direct ground candidate covers walking).
-        if not any(leg.mode is not Mode.WALK for leg in journey.legs):
-            continue
         # Skip a journey that rides through a stop with no Stop entry (a dangling
         # trip/footpath reference): it cannot be located. CSA already skips interior
         # stops, so a feed with an unregistered interior stop still plans -- only a
         # journey actually touching the dangling stop is routed around, rather than
-        # crashing in _transit_itinerary.
+        # crashing in _transit_itinerary. (Runs first so the coord lookups below
+        # are safe.)
         if any(leg.from_stop not in timetable.stops
                or leg.to_stop not in timetable.stops for leg in journey.legs):
             continue
+        # A walk-only journey (no vehicle leg) bypasses the mode restriction; keep
+        # it only if it is a reasonable walk. A short station-to-station footpath
+        # route is a legitimate no-car option, but an over-long footpath chain is
+        # not -- the direct ground candidate already covers driving.
+        if not any(leg.mode is not Mode.WALK for leg in journey.legs):
+            walk_km = sum(
+                haversine(timetable.stops[leg.from_stop].lat,
+                          timetable.stops[leg.from_stop].lon,
+                          timetable.stops[leg.to_stop].lat,
+                          timetable.stops[leg.to_stop].lon)
+                for leg in journey.legs)
+            if walk_km > _MAX_WALK_ONLY_KM:
+                continue
         return _transit_itinerary(origin, dest, depart_at, access, journey,
                                   e_leg, e_stop, timetable)
     return None

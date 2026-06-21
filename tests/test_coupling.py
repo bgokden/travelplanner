@@ -136,6 +136,25 @@ def test_no_walk_only_transit_candidate():
         assert any(leg.mode is not Mode.WALK for leg in it.legs)
 
 
+def test_short_footpath_only_transit_is_kept():
+    # A reasonable footpath-only route (within the walk cap) is a legitimate no-car
+    # option and must be offered, even though it has no vehicle leg; only an
+    # unreasonably long walk-only journey is dropped (see the 280 km case above).
+    tt = Timetable()
+    tt.add_stop(_stop("P", 47.0, 7.0))
+    tt.add_stop(_stop("Q", 47.072, 7.0))           # ~8 km apart (within the cap)
+    tt.add_footpath("P", "Q", timedelta(hours=2))
+    tt.add_footpath("Q", "P", timedelta(hours=2))
+    # small access radius so the origin reaches only P and the dest only Q,
+    # forcing the P->Q leg to be the footpath route (not a direct drive to Q).
+    conn = GeometricConnector(tt.stops, max_access_km=5.0)
+    origin = place("o", LocationType.HOTEL, 47.0, 7.0)
+    dest = place("d", LocationType.HOTEL, 47.072, 7.0)
+    results = plan(origin, dest, DEP, tt, conn, top_n=5)
+    assert any(all(leg.mode is Mode.WALK for leg in it.legs)
+               and it.total_distance_km > 1.5 for it in results)
+
+
 def test_short_trip_is_pure_ground():
     tt = Timetable()
     tt.add_stop(_stop("Far1", 47.0, 7.0))
