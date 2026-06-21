@@ -187,7 +187,7 @@ class CCHConnector:
         self._stop_node = dict(stop_to_node or {})
         for sid, stop in stops.items():
             self._stop_node.setdefault(sid, self._nearest_node(stop.lat, stop.lon))
-        self._customized: dict[frozenset[str], object] = {}
+        self._customized: dict[tuple, object] = {}
 
     def _walk_leg(self, dist_km: float) -> AccessLeg:
         return AccessLeg(Mode.WALK, dist_km / self.walk_kmh * 3600.0, dist_km,
@@ -198,12 +198,14 @@ class CCHConnector:
         return self.router.graph.key(idx)
 
     def _road(self, conditions: frozenset[str], day):
-        # cache one customized metric per (conditions); the planner uses one day.
+        # cache one customized metric per (conditions, day): seasonal / day-of-week
+        # validity makes the road metric date-dependent, so a connector reused
+        # across dates must not serve the first day's metric for a later day.
         # day=None means "current conditions" (seasonal validity needs a date),
         # matching drive_route; the RoadConnector protocol allows it.
         if day is None:
             day = date.today()
-        key = conditions
+        key = (conditions, day)
         road = self._customized.get(key)
         if road is None:
             road = self.router.customize(day, conditions)

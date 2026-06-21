@@ -1,6 +1,6 @@
 """Door-to-door coupling tests (Phase 3)."""
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from travelplanner import place
 from travelplanner.models import CostLevel, LocationType, Mode
@@ -187,6 +187,23 @@ def test_cch_connector_access_with_default_day():
 
     legs = conn.access(origin)               # day omitted -> defaults to today
     assert "B" in legs and legs["B"].mode is Mode.CAR
+
+
+def test_cch_connector_caches_metric_per_day():
+    # Regression: the road metric was cached on conditions only, so a connector
+    # reused across dates served the first day's (seasonal) metric for every later
+    # day. The cache key must include the day.
+    b = RoadGraphBuilder()
+    b.add_node("a", 47.0, 7.0)
+    b.add_node("b", 47.0, 7.05)
+    b.add_road("a", "b", 300)
+    router = CCHRoadRouter(b.build())
+    tt = Timetable()
+    tt.add_stop(_stop("B", 47.0, 7.05))
+    conn = CCHConnector(router, tt.stops, stop_to_node={"B": "b"})
+    d1, d2 = date(2026, 1, 15), date(2026, 7, 15)
+    assert conn._road(frozenset(), d1) is conn._road(frozenset(), d1)      # cached
+    assert conn._road(frozenset(), d1) is not conn._road(frozenset(), d2)  # per-day
 
 
 def test_cch_connector_walks_short_hops():
