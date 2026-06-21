@@ -163,9 +163,13 @@ def test_cch_connector_door_to_door():
     results = plan(origin, dest, DEP, tt, conn)
     assert results
     top = results[0]
-    assert top.primary_mode is Mode.TRAIN
+    # the absurd interlaken->brig road is avoided: the long haul is by train,
+    # reached by a road access leg from Bern. (With accurate routed distances the
+    # ~43 km access drive edges out the ~42 km train leg, so primary_mode is not
+    # asserted -- the point is the train is used, not the 28 h road.)
     assert top.legs[0].mode is Mode.CAR          # road access from Bern
     assert any(leg.mode is Mode.TRAIN for leg in top.legs)
+    assert len(top.legs) > 1                      # not the pure-drive candidate
     # the train arrives Brig 11:00; the final ~0.8 km hop to the door is walked
     assert top.legs[-1].mode is Mode.WALK
     assert datetime(2026, 7, 1, 11, 0) <= top.arrive_at <= datetime(2026, 7, 1, 11, 15)
@@ -187,6 +191,26 @@ def test_cch_connector_access_with_default_day():
 
     legs = conn.access(origin)               # day omitted -> defaults to today
     assert "B" in legs and legs["B"].mode is Mode.CAR
+
+
+def test_cch_connector_leg_distance_is_routed_length():
+    # Regression: leg distance was back-computed as time x 60 km/h. It must be the
+    # real routed path length (haversine-sum of the path nodes).
+    from travelplanner.geo import haversine
+    b = RoadGraphBuilder()
+    b.add_node("a", 47.0, 7.0)
+    b.add_node("b", 47.0, 7.50)               # ~38 km east
+    b.add_road("a", "b", 600)                 # fast 10-min road (not 60 km/h)
+    router = CCHRoadRouter(b.build())
+    tt = Timetable()
+    tt.add_stop(_stop("B", 47.0, 7.50))
+    conn = CCHConnector(router, tt.stops, stop_to_node={"B": "b"})
+    origin = place("o", LocationType.HOTEL, 47.0, 7.0)
+    leg = conn.access(origin, day=DEP.date())["B"]
+    assert leg.mode is Mode.CAR
+    expected = haversine(47.0, 7.0, 47.0, 7.50)
+    assert abs(leg.distance_km - expected) < 1.0     # routed ~38 km
+    assert leg.distance_km > 30                       # not the old 600s/3600*60 = 10 km
 
 
 def test_cch_connector_caches_metric_per_day():

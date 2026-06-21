@@ -176,13 +176,12 @@ class CCHConnector:
     def __init__(self, router, stops: dict[str, Stop],
                  stop_to_node: dict[str, str] | None = None, *,
                  max_access_km: float = 60.0, max_snap_km: float = 25.0,
-                 drive_kmh: float = 60.0, walk_kmh: float = 5.0,
+                 walk_kmh: float = 5.0,
                  walk_threshold_km: float = 1.5) -> None:
         self.router = router
         self.stops = stops
         self.max_access_km = max_access_km
         self.max_snap_km = max_snap_km
-        self.drive_kmh = drive_kmh
         self.walk_kmh = walk_kmh
         self.walk_threshold_km = walk_threshold_km
         self._stop_node = dict(stop_to_node or {})
@@ -222,11 +221,23 @@ class CCHConnector:
             self._customized[key] = road
         return road
 
-    def _seconds(self, from_node: str, to_node: str, conditions, day) -> float | None:
+    def _path_km(self, path) -> float:
+        # real routed length: haversine-sum the node coordinates along the path
+        # (mirrors roads._path_distance_km), instead of back-computing km from time.
+        g = self.router.graph
+        idx = path.node_indices
+        return sum(haversine(g.latitude[idx[i]], g.longitude[idx[i]],
+                             g.latitude[idx[i + 1]], g.longitude[idx[i + 1]])
+                   for i in range(len(idx) - 1))
+
+    def _drive(self, from_node: str, to_node: str, conditions, day):
+        """(seconds, routed_km) for a road leg, or None if unreachable."""
         if from_node == to_node:
-            return 0.0
+            return (0.0, 0.0)
         path = self._road(conditions, day).route(from_node, to_node)
-        return None if path is None else float(path.seconds)
+        if path is None:
+            return None
+        return (float(path.seconds), self._path_km(path))
 
     def _legs_from_point(self, point: Location, conditions, day,
                          to_dest: bool) -> dict[str, AccessLeg]:
@@ -243,10 +254,10 @@ class CCHConnector:
             if node is None or origin_node is None:   # not within the road coverage
                 continue
             a, b = (node, origin_node) if to_dest else (origin_node, node)
-            secs = self._seconds(a, b, conditions, day)
-            if secs is None:
+            drive = self._drive(a, b, conditions, day)
+            if drive is None:
                 continue
-            dist_km = secs / 3600.0 * self.drive_kmh
+            secs, dist_km = drive
             out[sid] = AccessLeg(Mode.CAR, secs, dist_km, CostLevel.MEDIUM)
         return out
 
@@ -270,8 +281,8 @@ class CCHConnector:
         d = self._nearest_node(dest.lat, dest.lon)
         if o is None or d is None:                 # an endpoint outside the coverage
             return None
-        secs = self._seconds(o, d, conditions, day)
-        if secs is None:
+        drive = self._drive(o, d, conditions, day)
+        if drive is None:
             return None
-        return AccessLeg(Mode.CAR, secs, secs / 3600.0 * self.drive_kmh,
-                         CostLevel.MEDIUM)
+        secs, dist_km = drive
+        return AccessLeg(Mode.CAR, secs, dist_km, CostLevel.MEDIUM)
