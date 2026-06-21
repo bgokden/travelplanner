@@ -96,72 +96,97 @@ class ConnectionScan:
                 Footpath(i, j, timedelta(seconds=sec)))
         return out
 
-    def _relax_footpaths(self, stop: str, arr: dict, by_trip: dict,
-                         pred: dict) -> None:
+    @staticmethod
+    def _earlier(a, b):
+        if a is None:
+            return b
+        if b is None:
+            return a
+        return a if a <= b else b
+
+    def _relax_footpaths(self, stop: str, arr_foot: dict, arr_veh: dict,
+                         pred_foot: dict) -> None:
+        # Walk from the earliest physical arrival at `stop` (whether reached on
+        # foot or by vehicle); the destination is reached ON FOOT -- ready to board
+        # immediately, no change time (the footpath duration is the change cost).
+        base = self._earlier(arr_foot.get(stop), arr_veh.get(stop))
+        if base is None:
+            return
         for fp in self._fp_from.get(stop, ()):
-            cand = arr[stop] + fp.duration
-            if fp.to_stop not in arr or cand < arr[fp.to_stop]:
-                arr[fp.to_stop] = cand
-                by_trip[fp.to_stop] = False
-                pred[fp.to_stop] = ("foot", fp)
+            cand = base + fp.duration
+            if arr_foot.get(fp.to_stop) is None or cand < arr_foot[fp.to_stop]:
+                arr_foot[fp.to_stop] = cand
+                pred_foot[fp.to_stop] = ("foot", fp)
 
     def _scan(self, sources: dict[str, datetime], target: str | None,
               conditions: frozenset[str],
               allowed_modes: frozenset | None = None):
+        # Two labels per stop: arr_foot is the earliest "ready to board" arrival
+        # (a source or a footpath -- no change time needed), arr_veh the earliest
+        # arrival ENDING ON A VEHICLE (needs the stop's change time to board a
+        # different run). They are tracked independently because a later walk
+        # arrival can be ready for a tight onward departure that an earlier vehicle
+        # arrival, needing the change time, would miss.
         if not sources:
-            return {}, {}
+            return {}, {}, {}, {}, {}
         t0 = min(sources.values())
         # Horizon is measured from each source's ready time, so the window end
         # tracks the latest source, not the earliest.
         t_end = max(sources.values()) + self.horizon
         conns = self.tt.connections(t0, t_end, conditions)
 
-        arr: dict[str, datetime] = {}
-        by_trip: dict[str, bool] = {}
-        pred: dict[str, tuple] = {}
-        boarded: dict[str, Connection] = {}   # run_id -> the connection it was boarded at
+        arr_foot: dict[str, datetime] = {}
+        arr_veh: dict[str, datetime] = {}
+        pred_foot: dict[str, tuple] = {}      # ("source",) | ("foot", fp)
+        pred_veh: dict[str, tuple] = {}       # ("trip", board_c, last_c)
+        boarded: dict[str, Connection] = {}   # run_id -> boarding connection
+        board_basis: dict[str, str] = {}      # run_id -> "foot"|"veh" at boarding
 
         for stop, t in sources.items():
-            if stop not in arr or t < arr[stop]:
-                arr[stop] = t
-                by_trip[stop] = False
-                pred[stop] = ("source",)
-        for stop in list(arr.keys()):
-            self._relax_footpaths(stop, arr, by_trip, pred)
+            if arr_foot.get(stop) is None or t < arr_foot[stop]:
+                arr_foot[stop] = t
+                pred_foot[stop] = ("source",)
+        for stop in list(arr_foot.keys()):
+            self._relax_footpaths(stop, arr_foot, arr_veh, pred_foot)
 
         for c in conns:
-            if target is not None and target in arr and c.departure > arr[target]:
-                break  # sorted by departure: nothing later can improve target
+            if target is not None:
+                bt = self._earlier(arr_foot.get(target), arr_veh.get(target))
+                if bt is not None and c.departure > bt:
+                    break  # sorted by departure: nothing later can improve target
             if allowed_modes is not None and c.mode not in allowed_modes:
                 continue
-            if c.run_id not in boarded:
-                ready = arr.get(c.dep_stop)
-                if ready is None:
+            u, v, r = c.dep_stop, c.arr_stop, c.run_id
+            if r not in boarded:
+                af_u, av_u = arr_foot.get(u), arr_veh.get(u)
+                veh_ready = (av_u + self.tt.transfer_time(u)
+                             if av_u is not None else None)
+                ready = self._earlier(af_u, veh_ready)
+                if ready is None or ready > c.departure:
                     continue
-                if by_trip.get(c.dep_stop):
-                    ready = ready + self.tt.transfer_time(c.dep_stop)
-                if ready > c.departure:
-                    continue
-                boarded[c.run_id] = c   # board here; this stop's readiness was just checked
-            if c.arr_stop not in arr or c.arrival < arr[c.arr_stop]:
-                arr[c.arr_stop] = c.arrival
-                by_trip[c.arr_stop] = True
-                # Predecessor records WHERE the run was boarded, so reconstruction
-                # rides it from that stop instead of stitching through an interior
-                # stop a faster run may have overwritten (which would fabricate an
-                # unchecked, possibly infeasible transfer).
-                pred[c.arr_stop] = ("trip", boarded[c.run_id], c)
-                self._relax_footpaths(c.arr_stop, arr, by_trip, pred)
+                boarded[r] = c
+                # Record which label made us ready, so reconstruction chains the
+                # feasible predecessor at the boarding stop (foot wins ties: no
+                # change time).
+                board_basis[r] = ("foot" if af_u is not None
+                                  and (veh_ready is None or af_u <= veh_ready)
+                                  else "veh")
+            if arr_veh.get(v) is None or c.arrival < arr_veh[v]:
+                prev_best = self._earlier(arr_foot.get(v), arr_veh.get(v))
+                arr_veh[v] = c.arrival
+                pred_veh[v] = ("trip", boarded[r], c)
+                if prev_best is None or c.arrival < prev_best:
+                    self._relax_footpaths(v, arr_foot, arr_veh, pred_foot)
 
-        return arr, pred
+        return arr_foot, arr_veh, pred_foot, pred_veh, board_basis
 
     def arrival_times(self, sources: dict[str, datetime],
                       conditions: frozenset[str] = frozenset(),
                       allowed_modes: frozenset | None = None
                       ) -> dict[str, datetime]:
         """Earliest arrival time at every reachable stop (for coupling)."""
-        arr, _ = self._scan(sources, None, conditions, allowed_modes)
-        return arr
+        af, av, _, _, _ = self._scan(sources, None, conditions, allowed_modes)
+        return {s: self._earlier(af.get(s), av.get(s)) for s in set(af) | set(av)}
 
     def query(self, sources: dict[str, datetime], target: str,
               conditions: frozenset[str] = frozenset(),
@@ -173,34 +198,47 @@ class ConnectionScan:
         """
         if not sources:
             return None
-        arr, pred = self._scan(sources, target, conditions, allowed_modes)
-        if target not in arr or pred.get(target) == ("source",):
+        af, av, pf, pv, bb = self._scan(sources, target, conditions, allowed_modes)
+        af_t, av_t = af.get(target), av.get(target)
+        if self._earlier(af_t, av_t) is None:
             return None
-        return self._reconstruct(target, pred, arr)
+        label = ("foot" if af_t is not None and (av_t is None or af_t <= av_t)
+                 else "veh")
+        if label == "foot" and pf.get(target) == ("source",):
+            return None  # target is itself a source: no actual journey
+        return self._reconstruct(target, label, af, av, pf, pv, bb)
 
-    def _reconstruct(self, target: str, pred: dict, arr: dict) -> Journey:
+    def _reconstruct(self, target: str, label: str, arr_foot: dict, arr_veh: dict,
+                     pred_foot: dict, pred_veh: dict, board_basis: dict) -> Journey:
         # Each "trip" predecessor already spans a whole boarded run (boarding
         # connection -> alighting connection), so a run is one leg and the back-
-        # pointer jumps to the boarding stop, skipping interior stops.
+        # pointer jumps to the boarding stop, skipping interior stops. `label`
+        # tracks whether the current stop is explained by its foot or vehicle label.
         steps: list[tuple] = []
-        stop = target
-        while pred[stop][0] != "source":
-            entry = pred[stop]
-            if entry[0] == "trip":
-                board_c, last_c = entry[1], entry[2]
+        stop, lab = target, label
+        while True:
+            if lab == "veh":
+                _, board_c, last_c = pred_veh[stop]
                 steps.append(("trip", board_c, last_c))
                 stop = board_c.dep_stop
-            else:  # foot
+                lab = board_basis[board_c.run_id]      # feasible basis at boarding
+            else:
+                entry = pred_foot[stop]
+                if entry[0] == "source":
+                    break
                 fp = entry[1]
                 steps.append(("foot", fp))
                 stop = fp.from_stop
+                af_s, av_s = arr_foot.get(stop), arr_veh.get(stop)
+                lab = ("foot" if af_s is not None and (av_s is None or af_s <= av_s)
+                       else "veh")                       # best arrival at walk origin
         steps.reverse()
 
         legs: list[JourneyLeg] = []
         for step in steps:
             if step[0] == "foot":
                 fp = step[1]
-                end = arr[fp.to_stop]
+                end = arr_foot[fp.to_stop]
                 legs.append(JourneyLeg(
                     mode=Mode.WALK, from_stop=fp.from_stop, to_stop=fp.to_stop,
                     departure=end - fp.duration, arrival=end,

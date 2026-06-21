@@ -274,3 +274,70 @@ def test_horizon_bounds_boarding_not_ride_through():
     scan = ConnectionScan(tt, horizon=timedelta(hours=1))      # t_end = 10:00
     j = scan.query({"A": datetime(2026, 7, 1, 9, 0)}, "C")
     assert j is not None and j.arrive == datetime(2026, 7, 1, 10, 30)
+
+
+# --- two-label Pareto correctness (review Finding 1: by_trip domination) ------
+
+def test_foot_ready_arrival_survives_earlier_vehicle_arrival():
+    """A footpath arrival leaves you ready to board immediately; an earlier
+    vehicle arrival at the same stop needs the change time. Collapsing the two
+    into one earliest-arrival label loses the foot-ready status and misses a
+    tight onward departure the walk could catch.
+
+    From S4: TA reaches S2 by vehicle at 09:31 (needs S2's 5-min change ->
+    ready 09:36), while TB+walk reaches S2 on foot at 09:33 (ready at once).
+    Onward T3 departs S2 09:34, catchable only from the foot label. The correct
+    arrival at D is 09:44; a single earliest-arrival label returns None.
+    """
+    tt = Timetable()
+    for s in ("S4", "S1", "S2", "D"):
+        _stop(tt, s, transfer_min=5)
+    tt.add_footpath("S1", "S2", timedelta(minutes=3))
+    tt.add_trip(make_trip("TA", Mode.TRAIN, [
+        ("S4", "09:00", "09:00"), ("S2", "09:31", "09:31")]))
+    tt.add_trip(make_trip("TB", Mode.TRAIN, [
+        ("S4", "09:00", "09:00"), ("S1", "09:30", "09:30")]))
+    tt.add_trip(make_trip("T3", Mode.TRAIN, [
+        ("S2", "09:34", "09:34"), ("D", "09:44", "09:44")]))
+    j = ConnectionScan(tt, horizon=timedelta(hours=6)).query({"S4": dt(8, 0)}, "D")
+    assert j is not None
+    assert j.arrive == dt(9, 44)
+    assert Mode.WALK in [leg.mode for leg in j.legs]   # used the foot-ready path
+    assert j.legs[-1].trip_id == "T3"
+
+
+def test_earlier_vehicle_arrival_never_breaks_reachability():
+    """Monotonicity invariant the by_trip domination bug violated: adding a run
+    that reaches an intermediate stop EARLIER by vehicle must never make a
+    previously reachable target arrive later or become unreachable. The earlier
+    vehicle label must not shadow the foot-ready label that catches the onward
+    departure.
+    """
+    import random
+    rng = random.Random(20260620)
+
+    def base_tt():
+        tt = Timetable()
+        for s in ("S4", "S1", "S2", "D"):
+            _stop(tt, s, transfer_min=5)
+        tt.add_footpath("S1", "S2", timedelta(minutes=3))
+        tt.add_trip(make_trip("TB", Mode.TRAIN, [
+            ("S4", "09:00", "09:00"), ("S1", "09:30", "09:30")]))
+        tt.add_trip(make_trip("T3", Mode.TRAIN, [
+            ("S2", "09:34", "09:34"), ("D", "09:44", "09:44")]))
+        return tt
+
+    base = ConnectionScan(base_tt(), horizon=timedelta(hours=6)).query(
+        {"S4": dt(8, 0)}, "D")
+    assert base is not None and base.arrive == dt(9, 44)
+
+    for _ in range(50):
+        tt = base_tt()
+        m = rng.randint(20, 33)            # spoiler reaches S2 by vehicle 09:20..09:33
+        tt.add_trip(make_trip("SPOIL", Mode.TRAIN, [
+            ("S4", "09:00", "09:00"),
+            ("S2", f"09:{m:02d}", f"09:{m:02d}")]))
+        j = ConnectionScan(tt, horizon=timedelta(hours=6)).query(
+            {"S4": dt(8, 0)}, "D")
+        assert j is not None, f"spoiler at 09:{m:02d} broke reachability"
+        assert j.arrive <= base.arrive, f"spoiler at 09:{m:02d} delayed arrival"
