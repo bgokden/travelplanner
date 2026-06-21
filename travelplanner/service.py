@@ -53,14 +53,27 @@ def _build_geocoder(online: bool, user_agent: str):
     return chain(bundled_geocoder, cached(nominatim_geocoder(user_agent=user_agent)))
 
 
+# "Load example" trips: London->New York exercises the real flight network; the
+# sample feed can only route its own canonical trip (see samples.sample_trip).
+_CITY_EXAMPLE = {"origin": "London", "dest": "New York"}
+_SAMPLE_EXAMPLE = {"origin": "47.00,7.005", "dest": "45.00,9.01"}
+# Above this stop count a feed is the real flight network, not the tiny sample.
+_FLIGHT_NETWORK_MIN_STOPS = 50
+
+
 def _default_timetable(online: bool):
     """The demo's default feed: the real OpenFlights flight network (so air
-    priority finds real flights), falling back to the bundled sample only when
-    the data is neither cached nor downloadable."""
+    priority finds real flights), falling back to the bundled sample when the
+    data is missing, unreachable, OR yields an empty network (e.g. an over-tight
+    route filter). Returns (timetable, source) with source "flights" or "sample"
+    so the caller can offer a matching example trip."""
     try:
-        return load_flight_network(download=online)
+        tt = load_flight_network(download=online)
+        if tt.stops:
+            return tt, "flights"
     except (FileNotFoundError, ValueError, OSError):
-        return sample_timetable()
+        pass
+    return sample_timetable(), "sample"
 
 
 def _search_stops(timetable, query: str, limit: int) -> list:
@@ -540,9 +553,9 @@ class _Handler(BaseHTTPRequestHandler):
         elif path == "/api/health":
             self._json({"status": "ok"})
         elif path == "/api/example":
-            self._json({"origin": "London", "dest": "New York",
-                        "depart": self.server.default_depart.strftime(
-                            "%Y-%m-%dT%H:%M")})
+            example = dict(self.server.example)
+            example["depart"] = self.server.default_depart.strftime("%Y-%m-%dT%H:%M")
+            self._json(example)
         elif path == "/api/geocode":
             self._handle_geocode(parse_qs(parsed.query))
         elif path == "/api/plan":
@@ -606,7 +619,10 @@ def make_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT, *,
     Pass an explicit `geocoder` to override the planning geocoder entirely.
     """
     if timetable is None:
-        timetable = _default_timetable(online)
+        timetable, source = _default_timetable(online)
+    else:
+        source = ("flights" if len(timetable.stops) >= _FLIGHT_NETWORK_MIN_STOPS
+                  else "sample")
     if default_depart is None:
         # next 08:00 (synthetic flights depart through the day); a sensible,
         # always-in-range default for the daily flight network.
@@ -622,7 +638,13 @@ def make_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT, *,
     server.geocoder = geocoder or _build_geocoder(online, user_agent)
     server.online = online
     server.user_agent = user_agent
-    server.airports = load_airports(download=online)   # cached OpenFlights airports
+    server.example = _CITY_EXAMPLE if source == "flights" else _SAMPLE_EXAMPLE
+    try:
+        server.airports = load_airports(download=online)   # cached OpenFlights airports
+    except (FileNotFoundError, ValueError, OSError):
+        # offline with no cache: autocomplete simply omits airport suggestions
+        # rather than crashing startup (mirrors the timetable fallback above).
+        server.airports = ()
     server.geo_cache = {}
     server.last_nominatim = 0.0
     server.default_depart = default_depart

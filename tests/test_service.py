@@ -175,6 +175,47 @@ def test_search_stops_excludes_airports():
     assert _search_stops(tt, "w", 8) == []       # too short
 
 
+def test_default_timetable_falls_back_when_network_empty(monkeypatch):
+    # an empty flight network (e.g. an over-tight route filter returns no hubs)
+    # must fall back to the sample feed, not be served as a routeless timetable.
+    import travelplanner.service as service
+    from travelplanner.graph.scheduled import Timetable
+    monkeypatch.setattr(service, "load_flight_network", lambda **kw: Timetable())
+    tt, source = service._default_timetable(online=False)
+    assert source == "sample"
+    assert tt.stops
+
+
+def test_default_timetable_falls_back_on_load_error(monkeypatch):
+    import travelplanner.service as service
+
+    def boom(**kw):
+        raise OSError("offline, no cache")
+
+    monkeypatch.setattr(service, "load_flight_network", boom)
+    tt, source = service._default_timetable(online=True)
+    assert source == "sample" and tt.stops
+
+
+def test_make_server_offline_airport_download_failure_does_not_crash(monkeypatch):
+    # online=True with no network must not crash make_server: the timetable falls
+    # back to the sample feed AND the airport index degrades to empty (regression:
+    # load_airports re-raised URLError after the timetable fallback succeeded).
+    import travelplanner.service as service
+
+    def boom(**kw):
+        raise OSError("offline, no cache")
+
+    monkeypatch.setattr(service, "load_airports", boom)
+    server = service.make_server("127.0.0.1", 0, online=True,
+                                 timetable=sample_timetable())
+    try:
+        assert server.airports == ()                          # degraded, not crashed
+        assert server.example == service._SAMPLE_EXAMPLE       # sample feed example
+    finally:
+        server.server_close()
+
+
 def _running_server():
     # pin the sample feed so the test is deterministic and never touches the
     # network or the OpenFlights cache.
@@ -205,6 +246,12 @@ def test_http_endpoints_end_to_end():
         status, body = _get(base, "/api/example")
         example = json.loads(body)
         assert {"origin", "dest", "depart"} <= set(example)
+        # the offered example must actually route in the served (sample) feed
+        ex_query = urllib.parse.urlencode({
+            "origin": example["origin"], "dest": example["dest"],
+            "depart": example["depart"], "top": "1"})
+        ex_plan = json.loads(_get(base, "/api/plan?" + ex_query)[1])
+        assert ex_plan["options"], "the demo's own example must produce a route"
 
         # autocomplete (offline server -> bundled cities; sample feed stations)
         status, body = _get(base, "/api/geocode?q=amsterd")
