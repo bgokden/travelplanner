@@ -44,6 +44,19 @@ def test_plan_response_warns_on_empty_and_transit_fallback():
         assert any("transit" in w for w in res["warnings"])
 
 
+def test_transit_fallback_warning_matches_actual_mode():
+    # The transit-degraded warning must not claim "driving" when the only option
+    # is a short WALK (within the 2 km transit walk threshold), far from any stop.
+    tt = sample_timetable()
+    depart = datetime(2026, 7, 1, 8, 0)
+    res = plan_response("10.0,10.0", "10.005,10.0", depart, tt, access="transit")
+    assert res["options"]
+    assert all(leg["mode"] == "walk"
+               for opt in res["options"] for leg in opt["legs"])
+    assert any("walking" in w for w in res["warnings"])
+    assert not any("driving" in w for w in res["warnings"])
+
+
 def test_plan_response_rejects_unknown_objective():
     o, d, dep = sample_trip()
     with pytest.raises(ValueError):

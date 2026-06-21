@@ -238,9 +238,12 @@ def plan_response(origin, dest, depart_at: datetime, timetable, *,
             "points closer to a hub.")
     elif access in ("transit", "both") and not any(
             leg.mode in LINE_HAUL_MODES for it in itineraries for leg in it.legs):
+        # name the real fallback mode: a sub-threshold door-to-door trip is a
+        # WALK, not a drive, so "driving" would be inaccurate.
+        drove = any(leg.mode is Mode.CAR for it in itineraries for leg in it.legs)
         warnings.append(
             "No transit or flights reachable from these points; showing direct "
-            "driving only.")
+            + ("driving" if drove else "walking") + " only.")
     return {
         "origin": o.to_dict(),
         "dest": d.to_dict(),
