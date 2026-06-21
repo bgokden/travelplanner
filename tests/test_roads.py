@@ -70,6 +70,17 @@ def test_snap_out_of_region_raises():
         _snap(r, Location("far", LocationType.HOTEL, 0.0, 0.0), "test")
 
 
+def test_snap_none_region_message_is_clear():
+    # An offline data_dir load passes region=None; the error must not read
+    # "None road data".
+    r = _tiny_router()
+    with pytest.raises(ValueError) as exc:
+        _snap(r, Location("far", LocationType.HOTEL, 0.0, 0.0), None)
+    msg = str(exc.value)
+    assert "None road data" not in msg
+    assert "the loaded road data" in msg
+
+
 def test_road_router_cache_key_normalized(monkeypatch):
     # road_router(region) and road_router(region, None) must reach the cached
     # builder with identical args, so they share one cache entry (no rebuild).

@@ -288,13 +288,16 @@ def _coerce(point, *, geocoder=None) -> Location:
 MAX_SNAP_KM = 25.0
 
 
-def _snap(router, point: Location, region: str) -> int:
+def _snap(router, point: Location, region: str | None) -> int:
     idx, dist = router.node_grid.nearest(point.lat, point.lon)
     if dist > MAX_SNAP_KM:
+        # region is just a label and may be None for an offline data_dir load;
+        # don't render "None road data".
+        where = f"the {region!r}" if region is not None else "the loaded"
         raise ValueError(
-            f"{point.name!r} ({point.lat},{point.lon}) is not within the "
-            f"{region!r} road data (nearest road is {dist:.0f} km away). "
-            f"Use a region that covers it.")
+            f"{point.name!r} ({point.lat},{point.lon}) is not within {where} "
+            f"road data (nearest road is {dist:.0f} km away). "
+            f"Use a region or data_dir that covers it.")
     return idx
 
 
