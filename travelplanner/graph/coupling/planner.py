@@ -9,11 +9,13 @@ arrive_at are schedule-accurate.
 Phase 4: candidates are diversified by running the line-haul under different
 mode restrictions (all / air-only / surface-only). The Pareto frontier is kept
 over the objective's own axes -- (total_duration, cost_rank, transfers), and for
-GREENEST also private-car distance and emissions -- then ordered by the requested
-Objective. So a greener-but-slower option is kept for GREENEST but not padded into
-a FASTEST/CHEAPEST result. AIR_PRIORITY prefers air among non-dominated options (a
-strictly dominated flight is dropped, by design). Candidate generation is
-mode-restricted diversification, not an exhaustive multi-label search.
+GREENEST and AIR_PRIORITY also private-car distance and emissions -- then ordered
+by the requested Objective. So a greener-but-slower option is kept for GREENEST,
+and a slower-but-car-free flight is kept for AIR_PRIORITY, but neither is padded
+into a FASTEST/CHEAPEST result. AIR_PRIORITY prefers air among non-dominated
+options (a flight dominated on every axis including car_km/emissions is dropped).
+Candidate generation is mode-restricted diversification, not an exhaustive
+multi-label search.
 """
 
 from datetime import datetime, timedelta
@@ -108,14 +110,22 @@ def _tuple_dominates(a: tuple, b: tuple) -> bool:
     return all(x <= y for x, y in zip(a, b)) and any(x < y for x, y in zip(a, b))
 
 
+# Objectives whose preference is not captured by (time, cost, transfers) alone, so
+# they keep the full frontier: GREENEST ranks car_km/emissions; AIR_PRIORITY wants
+# a flight, which is non-dominated only via the car_km/emissions axes (there is no
+# "flies" axis). Restricting them to the 3 core axes would prune the very option
+# they prefer (the greener option, or a slower-but-car-free flight).
+_FULL_FRONTIER_OBJECTIVES = frozenset({Objective.GREENEST, Objective.AIR_PRIORITY})
+
+
 def _objective_axes(itin: Itinerary, objective: Objective) -> tuple:
     """Pareto axes for an objective: the full (time, cost, transfers, car_km,
-    emissions) for GREENEST, else only (time, cost, transfers) so the greener
-    axes do not keep an option that is strictly worse on the requested ones.
-    Low-car diversification is therefore surfaced under GREENEST (where it ranks),
-    not padded into a FASTEST/CHEAPEST result."""
+    emissions) for GREENEST/AIR_PRIORITY, else only (time, cost, transfers) so the
+    greener axes do not keep an option that is strictly worse on the requested
+    ones. Low-car diversification is therefore surfaced under GREENEST (where it
+    ranks), not padded into a FASTEST/CHEAPEST result."""
     m = _metrics(itin)
-    return m if objective is Objective.GREENEST else m[:3]
+    return m if objective in _FULL_FRONTIER_OBJECTIVES else m[:3]
 
 
 def _dedupe(cands: list[Itinerary]) -> list[Itinerary]:
@@ -218,13 +228,23 @@ def _transit_candidate(csa: ConnectionScan, origin: Location, dest: Location,
         key=lambda x: x[0])
     for _, e_stop, e_leg in ranked:
         journey = csa.query(sources, e_stop, conditions, allowed_modes)
-        # A journey reached purely by footpaths (no vehicle leg) bypasses the mode
-        # restriction and is not a real transit option -- it would surface a long
-        # pure-walk "transit" itinerary; the direct ground candidate covers walking.
-        if journey is not None and any(
-                leg.mode is not Mode.WALK for leg in journey.legs):
-            return _transit_itinerary(origin, dest, depart_at, access, journey,
-                                      e_leg, e_stop, timetable)
+        if journey is None:
+            continue
+        # Skip a journey reached purely by footpaths (no vehicle leg): it bypasses
+        # the mode restriction and would surface a long pure-walk "transit" option
+        # (the direct ground candidate covers walking).
+        if not any(leg.mode is not Mode.WALK for leg in journey.legs):
+            continue
+        # Skip a journey that rides through a stop with no Stop entry (a dangling
+        # trip/footpath reference): it cannot be located. CSA already skips interior
+        # stops, so a feed with an unregistered interior stop still plans -- only a
+        # journey actually touching the dangling stop is routed around, rather than
+        # crashing in _transit_itinerary.
+        if any(leg.from_stop not in timetable.stops
+               or leg.to_stop not in timetable.stops for leg in journey.legs):
+            continue
+        return _transit_itinerary(origin, dest, depart_at, access, journey,
+                                  e_leg, e_stop, timetable)
     return None
 
 
@@ -278,8 +298,8 @@ def plan(origin: Location, dest: Location, depart_at: datetime,
     Returns a list of up to top_n Itinerary objects, best first. An EMPTY list
     means no route exists for the date/conditions (e.g. an out-of-season ferry
     with no road alternative) -- it is not an error. Invalid input (e.g. an
-    out-of-range coordinate) raises instead, so empty != bad input. A timetable
-    with a dangling stop reference raises ValueError (validated up front).
+    out-of-range coordinate) raises instead, so empty != bad input. A journey that
+    would ride through a dangling (unregistered) stop is routed around, not crashed.
 
     Each Itinerary exposes: legs (list[Leg]), depart_at / arrive_at (datetime,
     naive local time), total_duration (timedelta; total_minutes for a float),
@@ -289,7 +309,6 @@ def plan(origin: Location, dest: Location, depart_at: datetime,
     timedeltas, and cost_level. Use to_dict()/to_json() or itinerary_records /
     leg_records for JSON or tabular output.
     """
-    timetable.validate()
     return _rank(_candidates(origin, dest, depart_at, timetable, connector,
                              conditions, horizon), objective, top_n)
 
@@ -305,7 +324,6 @@ def plan_multi(origin: Location, dest: Location, depart_at: datetime,
     car-access and a transit-access connector -- so a drive-to-airport itinerary
     and a walk-to-train one compete on one frontier (the latter would otherwise
     never be generated). Same return contract as plan()."""
-    timetable.validate()
     pooled: list[Itinerary] = []
     for connector in connectors:
         pooled += _candidates(origin, dest, depart_at, timetable, connector,

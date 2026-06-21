@@ -76,11 +76,9 @@ def test_geometric_direct_drive_time_monotonic_across_band():
     assert times == sorted(times)              # non-decreasing with distance
 
 
-def test_plan_rejects_phantom_stop():
-    # Regression: a dangling stop reference (a footpath/trip naming a stop with no
-    # Stop entry) crashed journey reconstruction with an opaque KeyError; the
-    # timetable is now validated up front with a clear ValueError.
-    import pytest
+def test_plan_skips_phantom_stop_journey():
+    # A journey that rides through a stop with no Stop entry (a dangling footpath/
+    # trip reference) is routed around, not crashed-on with an opaque KeyError.
     tt = Timetable()
     tt.add_stop(_stop("S", 47.0, 7.0))
     tt.add_stop(_stop("D", 46.0, 8.0))
@@ -90,8 +88,24 @@ def test_plan_rejects_phantom_stop():
     conn = GeometricConnector(tt.stops)
     origin = place("o", LocationType.HOTEL, 47.0, 7.0)
     dest = place("d", LocationType.HOTEL, 46.0, 8.0)
-    with pytest.raises(ValueError, match="GHOST"):
-        plan(origin, dest, DEP, tt, conn)
+    results = plan(origin, dest, DEP, tt, conn)                # no crash
+    assert all(leg.mode is not Mode.TRAIN
+               for it in results for leg in it.legs)           # phantom journey skipped
+
+
+def test_plan_tolerates_unregistered_interior_stop():
+    # The scheduled layer routes around an unregistered INTERIOR stop (CSA skips
+    # interior stops), so the feed must still plan -- not be rejected wholesale.
+    tt = Timetable()
+    tt.add_stop(_stop("A", 47.0, 7.0))
+    tt.add_stop(_stop("C", 45.0, 9.0))
+    tt.add_trip(make_trip("T", Mode.TRAIN, [
+        ("A", "09:00", "09:00"), ("B", "09:30", "09:30"), ("C", "11:00", "11:00")]))
+    conn = GeometricConnector(tt.stops)
+    origin = place("o", LocationType.HOTEL, 47.0, 7.0)
+    dest = place("d", LocationType.HOTEL, 45.0, 9.0)
+    results = plan(origin, dest, DEP, tt, conn)                # no raise
+    assert any(leg.mode is Mode.TRAIN for it in results for leg in it.legs)
 
 
 def test_geometric_connector_refuses_transoceanic_ground():

@@ -234,6 +234,21 @@ def test_objective_frontier_excludes_green_only_survivor_from_fastest():
     assert train in green                          # lower emissions -> kept
 
 
+def test_air_priority_keeps_car_free_flight_over_faster_drive():
+    # Regression: the objective-aware frontier pruned a car-free flight that was
+    # slower AND pricier than a drive-access alternative (dominated on time/cost/
+    # transfers), so AIR_PRIORITY returned NO flight -- the persona bug again.
+    # AIR_PRIORITY keeps the full frontier, so the car-free flight survives.
+    flight = _itin([_leg(Mode.WALK, 0.5, 300), _leg(Mode.FLIGHT, 500.0, 7200, CostLevel.HIGH)])
+    drive = _itin([_leg(Mode.CAR, 300.0, 3600, CostLevel.LOW)])   # faster + cheaper
+    air = _rank([flight, drive], Objective.AIR_PRIORITY, top_n=5)
+    assert any(leg.mode is Mode.FLIGHT for it in air for leg in it.legs)
+    assert air[0].primary_mode is Mode.FLIGHT                     # air ranked first
+    # FASTEST still drops the slower flight (it is genuinely worse on its axes)
+    fast = _rank([flight, drive], Objective.FASTEST, top_n=5)
+    assert not any(leg.mode is Mode.FLIGHT for it in fast for leg in it.legs)
+
+
 def test_air_priority_counts_flight_leg_not_longest_leg():
     """A genuine flight whose airport-access drive is its longest leg must still
     rank as 'air' under AIR_PRIORITY (it flies)."""
