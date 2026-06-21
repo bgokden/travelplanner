@@ -38,13 +38,25 @@ class RoadConnector(Protocol):
                conditions: frozenset[str], *, day=None) -> AccessLeg | None: ...
 
 
+def _drive_kmh(road_km: float, base_kmh: float) -> float:
+    """Effective driving speed by leg length: short urban/access legs run at the
+    base speed, longer regional and motorway line-haul legs progressively faster.
+    A flat base over (crow-flies x detour) distance nearly doubled the real drive
+    time for long intercity legs."""
+    if road_km <= 30.0:
+        return base_kmh
+    if road_km <= 150.0:
+        return max(base_kmh, 80.0)
+    return max(base_kmh, 100.0)
+
+
 def _ground_leg(distance_km: float, *, drive_kmh: float, walk_kmh: float,
                 walk_threshold_km: float, detour: float) -> AccessLeg:
     if distance_km <= walk_threshold_km:
         seconds = distance_km / walk_kmh * 3600.0
         return AccessLeg(Mode.WALK, seconds, distance_km, CostLevel.LOW)
     road_km = distance_km * detour
-    seconds = road_km / drive_kmh * 3600.0
+    seconds = road_km / _drive_kmh(road_km, drive_kmh) * 3600.0
     return AccessLeg(Mode.CAR, seconds, road_km, CostLevel.MEDIUM)
 
 

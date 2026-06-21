@@ -27,10 +27,10 @@ def _trade_off_timetable():
         cost_level=CostLevel.HIGH))
     tt.add_trip(make_trip("R1", Mode.TRAIN, [
         ("Sx", "09:00", "09:00"), ("Mid", "11:00", "11:00")],
-        cost_level=CostLevel.MEDIUM))
+        cost_level=CostLevel.LOW))
     tt.add_trip(make_trip("R2", Mode.TRAIN, [
         ("Mid", "11:10", "11:10"), ("Sy", "13:00", "13:00")],
-        cost_level=CostLevel.MEDIUM))
+        cost_level=CostLevel.LOW))
     return tt
 
 
@@ -126,7 +126,7 @@ def test_cheapest_picks_train():
     conn = GeometricConnector(tt.stops)
     results = plan(ORIGIN, DEST, DEP, tt, conn, objective=Objective.CHEAPEST)
     assert results[0].primary_mode is Mode.TRAIN
-    assert results[0].cost_level is CostLevel.MEDIUM
+    assert results[0].cost_level is CostLevel.LOW   # train is the cheapest mode
 
 
 def test_fastest_picks_flight():

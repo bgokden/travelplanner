@@ -25,12 +25,12 @@ def _has_mode(itineraries, mode):
 def test_door_to_door_train_beats_driving():
     tt = Timetable()
     tt.add_stop(_stop("StA", 47.0, 7.0))
-    tt.add_stop(_stop("StC", 46.0, 8.0))
+    tt.add_stop(_stop("StC", 44.0, 9.0))        # ~360 km away: fast rail beats a drive
     tt.add_trip(make_trip("T", Mode.TRAIN, [
         ("StA", "09:00", "09:00"), ("StC", "10:00", "10:00")]))
     conn = GeometricConnector(tt.stops)
     origin = place("HomeA", LocationType.HOTEL, 47.01, 7.01)
-    dest = place("HotelC", LocationType.HOTEL, 45.99, 7.99)
+    dest = place("HotelC", LocationType.HOTEL, 43.99, 8.99)
 
     results = plan(origin, dest, DEP, tt, conn)
     assert results
