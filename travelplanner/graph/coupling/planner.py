@@ -7,11 +7,13 @@ each leg's pre-departure wait is recorded as `overhead`, so total_duration and
 arrive_at are schedule-accurate.
 
 Phase 4: candidates are diversified by running the line-haul under different
-mode restrictions (all / air-only / surface-only). The Pareto frontier over
-(total_duration, cost_rank, transfers) is kept, then ordered by the requested
-Objective. AIR_PRIORITY prefers air among non-dominated options (a strictly
-dominated flight is dropped, by design). Candidate generation is mode-restricted
-diversification, not an exhaustive multi-label search.
+mode restrictions (all / air-only / surface-only). The Pareto frontier is kept
+over the objective's own axes -- (total_duration, cost_rank, transfers), and for
+GREENEST also private-car distance and emissions -- then ordered by the requested
+Objective. So a greener-but-slower option is kept for GREENEST but not padded into
+a FASTEST/CHEAPEST result. AIR_PRIORITY prefers air among non-dominated options (a
+strictly dominated flight is dropped, by design). Candidate generation is
+mode-restricted diversification, not an exhaustive multi-label search.
 """
 
 from datetime import datetime, timedelta
@@ -93,16 +95,27 @@ def _emissions(itin: Itinerary) -> float:
 
 
 def _metrics(itin: Itinerary) -> tuple[float, int, int, float, float]:
-    # Emissions is a ranking dimension (GREENEST), so it must be a Pareto axis:
-    # otherwise _pareto could drop a greener-but-slower option before the GREENEST
-    # order key (which ranks by emissions) ever sees it.
+    # (time, cost, transfers, car_km, emissions). car_km and emissions are ranking
+    # dimensions only for GREENEST, so they are frontier axes only for GREENEST
+    # (see _objective_axes): keeping them for every objective would let a car-free
+    # /low-emission option survive the frontier and surface a strictly slower-and-
+    # pricier trip under FASTEST/CHEAPEST.
     return (itin.total_duration.total_seconds(), itin.cost_level.rank,
             _transfers(itin), _car_km(itin), _emissions(itin))
 
 
-def _dominates(a: Itinerary, b: Itinerary) -> bool:
-    ma, mb = _metrics(a), _metrics(b)
-    return all(x <= y for x, y in zip(ma, mb)) and any(x < y for x, y in zip(ma, mb))
+def _tuple_dominates(a: tuple, b: tuple) -> bool:
+    return all(x <= y for x, y in zip(a, b)) and any(x < y for x, y in zip(a, b))
+
+
+def _objective_axes(itin: Itinerary, objective: Objective) -> tuple:
+    """Pareto axes for an objective: the full (time, cost, transfers, car_km,
+    emissions) for GREENEST, else only (time, cost, transfers) so the greener
+    axes do not keep an option that is strictly worse on the requested ones.
+    Low-car diversification is therefore surfaced under GREENEST (where it ranks),
+    not padded into a FASTEST/CHEAPEST result."""
+    m = _metrics(itin)
+    return m if objective is Objective.GREENEST else m[:3]
 
 
 def _dedupe(cands: list[Itinerary]) -> list[Itinerary]:
@@ -124,9 +137,11 @@ def _dedupe(cands: list[Itinerary]) -> list[Itinerary]:
     return out
 
 
-def _pareto(cands: list[Itinerary]) -> list[Itinerary]:
-    return [c for c in cands
-            if not any(o is not c and _dominates(o, c) for o in cands)]
+def _frontier(cands: list[Itinerary], objective: Objective) -> list[Itinerary]:
+    """Pareto frontier on the objective's own axes (see _objective_axes)."""
+    axes = [(_objective_axes(c, objective), c) for c in cands]
+    return [c for ma, c in axes
+            if not any(o is not c and _tuple_dominates(mb, ma) for mb, o in axes)]
 
 
 def _order_key(objective: Objective):
@@ -141,8 +156,8 @@ def _order_key(objective: Objective):
         if objective is Objective.GREENEST:
             # least private-car distance first (keep the transit-preferring
             # intent), then least emissions so a train outranks a flight when
-            # both are car-free, then time. Emissions is also a Pareto axis
-            # (see _metrics) so the greener option survives the frontier.
+            # both are car-free, then time. car_km/emissions are GREENEST frontier
+            # axes (see _objective_axes) so the greener option survives the filter.
             return (car_km, emissions, total, transfers, cost)
         # AIR_PRIORITY: prefer an itinerary that actually flies. Test for a FLIGHT
         # leg, not primary_mode (the longest leg) -- a long airport-access drive
@@ -245,7 +260,7 @@ def _candidates(origin: Location, dest: Location, depart_at: datetime,
 def _rank(candidates: list[Itinerary], objective: Objective,
           top_n: int) -> list[Itinerary]:
     """Pareto-filter, score, and order candidates for the objective; keep top_n."""
-    frontier = _pareto(_dedupe(candidates))
+    frontier = _frontier(_dedupe(candidates), objective)
     for itin in frontier:
         itin.score = itin.total_duration.total_seconds()
     frontier.sort(key=_order_key(objective))

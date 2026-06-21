@@ -247,19 +247,19 @@ def test_plan_trip_car_access_default_drives_to_airport():
 
 def test_plan_trip_access_both_shows_car_and_transit():
     """access='both' pools car and transit candidates so BOTH the drive-to-airport
-    flight and the walk-to-train itinerary appear on one frontier."""
+    flight and the walk-to-train itinerary appear on one frontier. The low-car
+    option is a strictly slower trade-off, so it is surfaced under GREENEST (where
+    it ranks), not padded into the time-ordered default result."""
     tt = _airport_train_timetable()
     origin = place("Amsterdam centre", LocationType.HOTEL, 52.3702, 4.8952)
     dest = place("Vaduz", LocationType.HOTEL, 47.1410, 9.5215)
     depart = datetime(2026, 6, 17, 7, 30)
 
-    res = plan_trip(origin, dest, depart, tt, access="both", top_n=5)
+    res = plan_trip(origin, dest, depart, tt, access="both",
+                    objective=Objective.GREENEST, top_n=5)
     first_legs = {it.legs[0].mode for it in res}
     assert Mode.CAR in first_legs and Mode.WALK in first_legs   # both access modes present
-    # GREENEST leads with the no-car option
-    green = plan_trip(origin, dest, depart, tt, access="both",
-                      objective=Objective.GREENEST)[0]
-    assert not any(leg.mode is Mode.CAR for leg in green.legs)
+    assert not any(leg.mode is Mode.CAR for leg in res[0].legs)  # GREENEST leads no-car
 
 
 def test_plan_trip_asymmetric_transit_access_car_egress():

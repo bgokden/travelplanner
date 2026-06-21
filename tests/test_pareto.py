@@ -8,7 +8,7 @@ from travelplanner.graph.schema import NodeType
 from travelplanner.graph.scheduled import Stop, Timetable, make_trip
 from travelplanner.graph.query import Objective
 from travelplanner.graph.coupling import GeometricConnector, plan
-from travelplanner.graph.coupling.planner import _dedupe, _order_key
+from travelplanner.graph.coupling.planner import _dedupe, _order_key, _rank
 
 DEP = datetime(2026, 7, 1, 8, 0)
 
@@ -147,12 +147,15 @@ def test_greenest_keeps_dominated_greener_train_on_frontier():
     assert air.primary_mode is Mode.FLIGHT                    # air priority still flies
 
 
-def test_low_car_option_survives_frontier():
-    """The low-driving option is on the Pareto frontier (not pruned) even though
-    it has more transfers and is slower than the flight."""
+def test_low_car_option_survives_frontier_under_greenest():
+    """The low-driving option is on the GREENEST frontier (not pruned) even though
+    it is slower than the flight. Under non-green objectives it is a strictly
+    worse-on-(time,cost,transfers) option and is correctly dropped."""
     tt = _drive_vs_walk_timetable()
     conn = GeometricConnector(tt.stops)
-    primaries = {it.primary_mode for it in plan(ORIGIN, DEST, DEP, tt, conn, top_n=5)}
+    primaries = {it.primary_mode for it in
+                 plan(ORIGIN, DEST, DEP, tt, conn,
+                      objective=Objective.GREENEST, top_n=5)}
     assert Mode.FLIGHT in primaries and Mode.TRAIN in primaries
 
 
@@ -216,6 +219,19 @@ def test_dedupe_collapses_true_duplicates():
     a = _itin([_leg(Mode.CAR, 50.0, 3600, CostLevel.MEDIUM)])
     b = _itin([_leg(Mode.CAR, 50.0, 3600, CostLevel.MEDIUM)])
     assert len(_dedupe([a, b])) == 1
+
+
+def test_objective_frontier_excludes_green_only_survivor_from_fastest():
+    # A car-free, low-emission train that is slower AND the same cost as a flight
+    # is dominated on (time, cost, transfers). It must NOT occupy a FASTEST slot
+    # (kept only by the green axes), but GREENEST -- which ranks emissions -- keeps
+    # it on the frontier.
+    flight = _itin([_leg(Mode.FLIGHT, 500.0, 3000, CostLevel.MEDIUM)])
+    train = _itin([_leg(Mode.TRAIN, 480.0, 6000, CostLevel.MEDIUM)])   # slower, same cost
+    fast = _rank([flight, train], Objective.FASTEST, top_n=5)
+    assert flight in fast and train not in fast
+    green = _rank([flight, train], Objective.GREENEST, top_n=5)
+    assert train in green                          # lower emissions -> kept
 
 
 def test_air_priority_counts_flight_leg_not_longest_leg():
