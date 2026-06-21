@@ -144,12 +144,17 @@ class Timetable:
 
     def connections(self, start: datetime, end: datetime,
                     conditions: frozenset[str] = frozenset()) -> list[Connection]:
-        """Materialize connections departing within [start, end], sorted by
-        departure. Iterates service dates from start-1day to end to capture
-        overnight trips whose service date is the prior calendar day.
+        """Materialize connections for a [start, end] BOARDING window, sorted by
+        departure. The window bounds where a run may be BOARDED; once a run has a
+        boardable segment it is materialized in full (later segments departing
+        after `end` are kept so the scan can ride through). The service-date
+        look-back covers the largest stop-time offset, so multi-night runs whose
+        service date is several days earlier are still captured.
         """
         out: list[Connection] = []
-        day = (start - timedelta(days=1)).date()
+        max_offset = max((st.departure for trip in self.trips.values()
+                          for st in trip.stop_times), default=timedelta())
+        day = (start - max(timedelta(days=1), max_offset)).date()
         last = end.date()
         while day <= last:
             midnight = datetime(day.year, day.month, day.day)
@@ -159,23 +164,29 @@ class Timetable:
                     continue
                 sts = trip.stop_times
                 run_id = f"{trip.id}@{iso}"
+                segs: list[Connection] = []
+                boardable = False
                 for a, b in zip(sts, sts[1:]):
                     dep = midnight + a.departure
                     arr = midnight + b.arrival
-                    if dep < start or dep > end:
-                        continue
+                    if dep < start:
+                        continue       # cannot board (nor ride-through) before t0
                     # A vehicle segment between two distinct stops must advance
                     # time. Non-positive-duration segments are invalid data and
                     # would also break the scan's departure-order precondition
                     # (co-located instantaneous links belong in footpaths).
                     if arr <= dep:
                         continue
-                    out.append(Connection(
+                    segs.append(Connection(
                         dep_stop=a.stop_id, arr_stop=b.stop_id,
                         departure=dep, arrival=arr,
                         trip_id=trip.id, run_id=run_id,
                         mode=trip.mode, cost_level=trip.cost_level,
                     ))
+                    if dep <= end:
+                        boardable = True   # at least one segment can be boarded
+                if boardable:
+                    out.extend(segs)       # keep the run's tail past `end` too
             day += timedelta(days=1)
         out.sort(key=lambda c: (c.departure, c.arrival))
         return out

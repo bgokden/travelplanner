@@ -247,3 +247,30 @@ def test_non_positive_footpath_is_rejected():
     tt = Timetable()
     with pytest.raises(ValueError, match="positive duration"):
         tt.add_footpath("A", "B", timedelta(minutes=-1))
+
+
+# --- scan-window correctness (review: connections() window) ------------------
+
+def test_multi_night_sleeper_is_reachable():
+    # A run whose stop-time offset exceeds 48h (a multi-night sleeper) has its
+    # service date several days before departure; the look-back must reach it.
+    tt = Timetable()
+    tt.add_stop(Stop(id="P", name="P", lat=0.0, lon=0.0))
+    tt.add_stop(Stop(id="Q", name="Q", lat=1.0, lon=1.0))
+    tt.add_trip(make_trip("SLEEP", Mode.TRAIN, [
+        ("P", "49:00", "49:00"), ("Q", "50:00", "50:00")]))
+    j = ConnectionScan(tt).query({"P": datetime(2026, 7, 1, 0, 30)}, "Q")
+    assert j is not None and j.arrive == datetime(2026, 7, 1, 2, 0)
+
+
+def test_horizon_bounds_boarding_not_ride_through():
+    # A run boarded inside the horizon rides through to its end even if a later
+    # segment departs after the horizon window.
+    tt = Timetable()
+    for s in ("A", "B", "C"):
+        tt.add_stop(Stop(id=s, name=s, lat=0.0, lon=0.0))
+    tt.add_trip(make_trip("R", Mode.TRAIN, [
+        ("A", "09:30", "09:30"), ("B", "09:50", "10:05"), ("C", "10:30", "10:30")]))
+    scan = ConnectionScan(tt, horizon=timedelta(hours=1))      # t_end = 10:00
+    j = scan.query({"A": datetime(2026, 7, 1, 9, 0)}, "C")
+    assert j is not None and j.arrive == datetime(2026, 7, 1, 10, 30)
