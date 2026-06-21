@@ -270,9 +270,11 @@ def test_default_timetable_falls_back_on_load_error(monkeypatch):
 
 
 def test_make_server_offline_airport_download_failure_does_not_crash(monkeypatch):
-    # online=True with no network must not crash make_server: the timetable falls
-    # back to the sample feed AND the airport index degrades to empty (regression:
-    # load_airports re-raised URLError after the timetable fallback succeeded).
+    # online=True with no network must not crash make_server building the airport
+    # index: load_airports failure degrades to an empty index (regression: it
+    # re-raised URLError after the timetable fallback had already succeeded). The
+    # timetable fallback itself is covered by the _default_timetable tests above;
+    # here the sample feed is passed explicitly so source resolves from stop count.
     import travelplanner.service as service
 
     def boom(**kw):

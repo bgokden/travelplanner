@@ -61,6 +61,21 @@ def test_drive_time_is_monotonic_in_distance():
     assert _drive_seconds(156.0, 60.0) > _drive_seconds(149.5, 60.0)  # no inversion
 
 
+def test_geometric_direct_drive_time_monotonic_across_band():
+    # Public-path regression (fails on the old step model): a farther destination
+    # must never be reported as a shorter drive. The step model made ~120 km
+    # faster than ~115 km at the 150 km road band boundary.
+    conn = GeometricConnector({})
+    origin = place("o", LocationType.HOTEL, 47.0, 7.0)
+    times = []
+    for dlat in range(50, 250, 5):              # 0.50..2.45 deg N -> spans the band
+        dest = place("d", LocationType.HOTEL, 47.0 + dlat / 100.0, 7.0)
+        leg = conn.direct(origin, dest)
+        assert leg is not None and leg.mode is Mode.CAR
+        times.append(leg.seconds)
+    assert times == sorted(times)              # non-decreasing with distance
+
+
 def test_geometric_connector_refuses_transoceanic_ground():
     # New York -> Tokyo straight line is ~10,800 km; the geometric connector
     # must not offer a pure-ground "drive across the ocean" candidate.
