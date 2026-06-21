@@ -259,7 +259,8 @@ def plan(origin: Location, dest: Location, depart_at: datetime,
     Returns a list of up to top_n Itinerary objects, best first. An EMPTY list
     means no route exists for the date/conditions (e.g. an out-of-season ferry
     with no road alternative) -- it is not an error. Invalid input (e.g. an
-    out-of-range coordinate) raises instead, so empty != bad input.
+    out-of-range coordinate) raises instead, so empty != bad input. A timetable
+    with a dangling stop reference raises ValueError (validated up front).
 
     Each Itinerary exposes: legs (list[Leg]), depart_at / arrive_at (datetime,
     naive local time), total_duration (timedelta; total_minutes for a float),
@@ -269,6 +270,7 @@ def plan(origin: Location, dest: Location, depart_at: datetime,
     timedeltas, and cost_level. Use to_dict()/to_json() or itinerary_records /
     leg_records for JSON or tabular output.
     """
+    timetable.validate()
     return _rank(_candidates(origin, dest, depart_at, timetable, connector,
                              conditions, horizon), objective, top_n)
 
@@ -284,6 +286,7 @@ def plan_multi(origin: Location, dest: Location, depart_at: datetime,
     car-access and a transit-access connector -- so a drive-to-airport itinerary
     and a walk-to-train one compete on one frontier (the latter would otherwise
     never be generated). Same return contract as plan()."""
+    timetable.validate()
     pooled: list[Itinerary] = []
     for connector in connectors:
         pooled += _candidates(origin, dest, depart_at, timetable, connector,

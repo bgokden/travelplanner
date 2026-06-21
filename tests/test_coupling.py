@@ -76,6 +76,24 @@ def test_geometric_direct_drive_time_monotonic_across_band():
     assert times == sorted(times)              # non-decreasing with distance
 
 
+def test_plan_rejects_phantom_stop():
+    # Regression: a dangling stop reference (a footpath/trip naming a stop with no
+    # Stop entry) crashed journey reconstruction with an opaque KeyError; the
+    # timetable is now validated up front with a clear ValueError.
+    import pytest
+    tt = Timetable()
+    tt.add_stop(_stop("S", 47.0, 7.0))
+    tt.add_stop(_stop("D", 46.0, 8.0))
+    tt.add_footpath("S", "GHOST", timedelta(minutes=5))
+    tt.add_trip(make_trip("TR", Mode.TRAIN, [
+        ("GHOST", "09:00", "09:00"), ("D", "10:00", "10:00")]))
+    conn = GeometricConnector(tt.stops)
+    origin = place("o", LocationType.HOTEL, 47.0, 7.0)
+    dest = place("d", LocationType.HOTEL, 46.0, 8.0)
+    with pytest.raises(ValueError, match="GHOST"):
+        plan(origin, dest, DEP, tt, conn)
+
+
 def test_geometric_connector_refuses_transoceanic_ground():
     # New York -> Tokyo straight line is ~10,800 km; the geometric connector
     # must not offer a pure-ground "drive across the ocean" candidate.

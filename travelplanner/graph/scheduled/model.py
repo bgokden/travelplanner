@@ -115,6 +115,21 @@ class Timetable:
                      duration: timedelta) -> None:
         self.footpaths.append(Footpath(from_stop, to_stop, duration))
 
+    def validate(self) -> None:
+        """Raise ValueError if a trip stop_time or footpath endpoint references a
+        stop id with no Stop entry. Such a dangling reference would otherwise
+        surface as an opaque KeyError deep in journey reconstruction."""
+        for trip in self.trips.values():
+            for st in trip.stop_times:
+                if st.stop_id not in self.stops:
+                    raise ValueError(
+                        f"trip {trip.id!r} references unknown stop {st.stop_id!r}")
+        for fp in self.footpaths:
+            for sid in (fp.from_stop, fp.to_stop):
+                if sid not in self.stops:
+                    raise ValueError(
+                        f"footpath references unknown stop {sid!r}")
+
     def footpaths_from(self) -> dict[str, list[Footpath]]:
         out: dict[str, list[Footpath]] = {}
         for fp in self.footpaths:
