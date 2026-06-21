@@ -83,6 +83,35 @@ def test_greenest_minimizes_driving():
     assert not any(leg.mode is Mode.CAR for leg in green.legs)
 
 
+def _walk_to_both_timetable():
+    """A fast flight AND a slower train both reachable ON FOOT (no car), so
+    private-car distance ties at 0 -- only emissions tells them apart."""
+    tt = Timetable()
+    tt.add_stop(Stop("AirO", "origin airport", 47.0, 7.006, NodeType.AIRPORT))
+    tt.add_stop(Stop("AirD", "dest airport", 45.0, 9.006, NodeType.AIRPORT))
+    tt.add_stop(Stop("StO", "origin station", 47.0, 7.004))
+    tt.add_stop(Stop("StD", "dest station", 45.0, 9.004))
+    tt.add_trip(make_trip("FLT", Mode.FLIGHT, [
+        ("AirO", "09:00", "09:00"), ("AirD", "10:00", "10:00")],
+        cost_level=CostLevel.HIGH))
+    tt.add_trip(make_trip("TRN", Mode.TRAIN, [
+        ("StO", "09:00", "09:00"), ("StD", "12:00", "12:00")],
+        cost_level=CostLevel.MEDIUM))
+    return tt
+
+
+def test_greenest_prefers_train_over_flight_when_both_car_free():
+    # The reported bug: greenest only minimized car-km, so a car-free flight and
+    # a car-free train tied and the faster flight won. Now emissions rank train.
+    tt = _walk_to_both_timetable()
+    conn = GeometricConnector(tt.stops)
+    green = plan(ORIGIN, DEST, DEP, tt, conn, objective=Objective.GREENEST)[0]
+    air = plan(ORIGIN, DEST, DEP, tt, conn, objective=Objective.AIR_PRIORITY)[0]
+    assert air.primary_mode is Mode.FLIGHT       # air priority still flies
+    assert green.primary_mode is Mode.TRAIN      # greenest avoids the flight
+    assert not any(leg.mode is Mode.CAR for leg in green.legs)
+
+
 def test_low_car_option_survives_frontier():
     """The low-driving option is on the Pareto frontier (not pruned) even though
     it has more transfers and is slower than the flight."""

@@ -72,6 +72,26 @@ def _car_km(itin: Itinerary) -> float:
     return sum(leg.distance_km for leg in itin.legs if leg.mode is Mode.CAR)
 
 
+# Rough per-passenger emissions (g CO2 / km) by mode for the GREENEST ranking: a
+# flight is the worst per km, rail the best motorised option, walking free. These
+# rank options sensibly (flight >> car > ferry > train > walk); they are not a
+# precise carbon model.
+_EMISSIONS_G_PER_KM = {
+    Mode.WALK: 0.0, Mode.TRAIN: 35.0, Mode.FERRY: 120.0,
+    Mode.CAR: 170.0, Mode.FLIGHT: 250.0,
+}
+
+
+def _emissions(itin: Itinerary) -> float:
+    """Approximate trip CO2 (g): per-mode factor times each leg's distance.
+
+    Used to order GREENEST so a flight never outranks a train -- minimizing
+    private-car distance alone treated a flight and a train as equally green.
+    """
+    return sum(leg.distance_km * _EMISSIONS_G_PER_KM.get(leg.mode, 120.0)
+               for leg in itin.legs)
+
+
 def _metrics(itin: Itinerary) -> tuple[float, int, int, float]:
     return (itin.total_duration.total_seconds(), itin.cost_level.rank,
             _transfers(itin), _car_km(itin))
@@ -115,8 +135,11 @@ def _order_key(objective: Objective):
             return (cost, total, transfers)
         if objective is Objective.FEWEST_TRANSFERS:
             return (transfers, total, cost)
-        if objective is Objective.GREENEST:                # least driving, then time
-            return (car_km, total, transfers, cost)
+        if objective is Objective.GREENEST:
+            # least private-car distance first (keep the transit-preferring
+            # intent), then least emissions so a train outranks a flight when
+            # both are car-free, then time.
+            return (car_km, _emissions(it), total, transfers, cost)
         # AIR_PRIORITY: prefer an itinerary that actually flies. Test for a FLIGHT
         # leg, not primary_mode (the longest leg) -- a long airport-access drive
         # could otherwise make a genuine flight rank as non-air.
