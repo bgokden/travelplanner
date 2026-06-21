@@ -106,6 +106,22 @@ def test_geometric_connector_refuses_transoceanic_ground():
     assert conn.direct(ny, nearby, frozenset()) is not None
 
 
+def test_no_walk_only_transit_candidate():
+    # Regression: a mode-restricted CSA query could return a journey reached purely
+    # by footpath (no vehicle), surfacing a long pure-walk "transit" itinerary.
+    tt = Timetable()
+    tt.add_stop(_stop("NX", 47.0, 7.0))
+    tt.add_stop(_stop("NY", 45.0, 9.0))            # ~280 km away
+    tt.add_footpath("NX", "NY", timedelta(hours=3))
+    tt.add_footpath("NY", "NX", timedelta(hours=3))
+    conn = GeometricConnector(tt.stops)
+    origin = place("o", LocationType.HOTEL, 47.0, 7.0)
+    dest = place("d", LocationType.HOTEL, 45.0, 9.0)
+    results = plan(origin, dest, DEP, tt, conn, top_n=5)
+    for it in results:                              # no long pure-walk itinerary
+        assert any(leg.mode is not Mode.WALK for leg in it.legs)
+
+
 def test_short_trip_is_pure_ground():
     tt = Timetable()
     tt.add_stop(_stop("Far1", 47.0, 7.0))

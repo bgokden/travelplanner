@@ -203,7 +203,11 @@ def _transit_candidate(csa: ConnectionScan, origin: Location, dest: Location,
         key=lambda x: x[0])
     for _, e_stop, e_leg in ranked:
         journey = csa.query(sources, e_stop, conditions, allowed_modes)
-        if journey is not None:
+        # A journey reached purely by footpaths (no vehicle leg) bypasses the mode
+        # restriction and is not a real transit option -- it would surface a long
+        # pure-walk "transit" itinerary; the direct ground candidate covers walking.
+        if journey is not None and any(
+                leg.mode is not Mode.WALK for leg in journey.legs):
             return _transit_itinerary(origin, dest, depart_at, access, journey,
                                       e_leg, e_stop, timetable)
     return None
