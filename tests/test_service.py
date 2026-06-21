@@ -57,6 +57,18 @@ def test_transit_fallback_warning_matches_actual_mode():
     assert not any("driving" in w for w in res["warnings"])
 
 
+def test_transit_fallback_warning_mixed_modes():
+    # access='both' can return BOTH a car and a walk direct option; the warning
+    # must not claim "driving only" when a walk is also shown.
+    tt = sample_timetable()
+    depart = datetime(2026, 7, 1, 8, 0)
+    res = plan_response("20.0,20.0", "20.016,20.0", depart, tt, access="both", top_n=3)
+    modes = {leg["mode"] for opt in res["options"] for leg in opt["legs"]}
+    assert {"car", "walk"} <= modes
+    assert any("direct travel only" in w for w in res["warnings"])
+    assert not any("driving only" in w for w in res["warnings"])
+
+
 def test_plan_response_rejects_unknown_objective():
     o, d, dep = sample_trip()
     with pytest.raises(ValueError):

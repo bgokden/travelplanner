@@ -259,11 +259,20 @@ def plan_response(origin, dest, depart_at: datetime, timetable, *,
     elif access in ("transit", "both") and not any(
             leg.mode in LINE_HAUL_MODES for it in itineraries for leg in it.legs):
         # name the real fallback mode: a sub-threshold door-to-door trip is a
-        # WALK, not a drive, so "driving" would be inaccurate.
-        drove = any(leg.mode is Mode.CAR for it in itineraries for leg in it.legs)
+        # WALK, not a drive, and access='both' can return both -- so "driving"
+        # alone would be inaccurate.
+        legs = [leg for it in itineraries for leg in it.legs]
+        has_car = any(leg.mode is Mode.CAR for leg in legs)
+        has_walk = any(leg.mode is Mode.WALK for leg in legs)
+        if has_car and not has_walk:
+            mode_word = "driving"
+        elif has_walk and not has_car:
+            mode_word = "walking"
+        else:
+            mode_word = "travel"
         warnings.append(
             "No transit or flights reachable from these points; showing direct "
-            + ("driving" if drove else "walking") + " only.")
+            + mode_word + " only.")
     return {
         "origin": o.to_dict(),
         "dest": d.to_dict(),
