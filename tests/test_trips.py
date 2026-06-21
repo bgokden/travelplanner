@@ -74,6 +74,26 @@ def test_plan_trip_explicit_connector_wins():
     assert modes <= {Mode.CAR, Mode.WALK}   # never reached a station
 
 
+def test_plan_trip_validates_modes_before_geocoding():
+    # An invalid mode flag must surface the mode error, not a geocoding error,
+    # even when the origin is unresolvable (cheap validation runs first).
+    _, _, depart = sample_trip()
+    tt = sample_timetable()
+    with pytest.raises(ValueError, match="access"):
+        plan_trip("Nonexistentplace_xyz", "0,0", depart, tt, access="bike")
+
+
+def test_plan_trip_connector_overrides_conflicting_flags():
+    # An explicit connector fully defines access/egress, so flag combos that are
+    # otherwise rejected (access='both' with a separate egress) must not raise.
+    origin, dest, depart = sample_trip()
+    tt = sample_timetable()
+    conn = GeometricConnector(tt.stops)
+    result = plan_trip(origin, dest, depart, tt, connector=conn,
+                       access="both", egress="car")
+    assert isinstance(result, list)
+
+
 def test_plan_trip_no_route_returns_empty():
     """No access, no feasible direct ground -> empty list (not an error)."""
     origin, dest, depart = sample_trip()

@@ -218,9 +218,13 @@ def plan_trip(origin, dest, depart_at: datetime, timetable: Timetable, *,
     Returns up to `top_n` Itinerary objects, best first for `objective`. An EMPTY
     list means no route exists (not an error); an invalid coordinate raises.
     """
+    # Validate cheap mode flags before the (possibly network) geocoding, and skip
+    # them entirely when an explicit connector= is supplied (it fully defines
+    # access/egress, so road/access/egress are ignored -- see above).
+    if connector is None:
+        _validate_modes(access, egress, road, turn_aware)
     o = _coerce(origin, geocoder=geocoder)
     d = _coerce(dest, geocoder=geocoder)
-    _validate_modes(access, egress, road, turn_aware)
 
     connectors = _select_connectors(o, d, timetable, access=access, egress=egress,
                                     road=road, turn_aware=turn_aware, region=region,
