@@ -21,7 +21,7 @@ the demo runs offline with no downloads. Pass a `region` (per request or via
 import argparse
 import json
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlparse
 
@@ -31,9 +31,10 @@ from travelplanner.geocoding import (bundled_geocoder, cached, chain,
 from travelplanner.models import Mode
 from travelplanner.graph.query import Objective
 from travelplanner.graph.schema import NodeType
-from travelplanner.openflights import load_airports, search_airports
+from travelplanner.openflights import (load_airports, load_flight_network,
+                                       search_airports)
 from travelplanner.roads import _coerce, drive_route
-from travelplanner.samples import sample_timetable, sample_trip
+from travelplanner.samples import sample_timetable
 from travelplanner.trips import plan_trip
 from travelplanner.viz import MODE_COLORS, itinerary_segments
 
@@ -50,6 +51,16 @@ def _build_geocoder(online: bool, user_agent: str):
     if not online:
         return bundled_geocoder
     return chain(bundled_geocoder, cached(nominatim_geocoder(user_agent=user_agent)))
+
+
+def _default_timetable(online: bool):
+    """The demo's default feed: the real OpenFlights flight network (so air
+    priority finds real flights), falling back to the bundled sample only when
+    the data is neither cached nor downloadable."""
+    try:
+        return load_flight_network(download=online)
+    except (FileNotFoundError, ValueError, OSError):
+        return sample_timetable()
 
 
 def _search_stops(timetable, query: str, limit: int) -> list:
@@ -492,9 +503,9 @@ class _Handler(BaseHTTPRequestHandler):
         elif path == "/api/health":
             self._json({"status": "ok"})
         elif path == "/api/example":
-            o, d, dep = sample_trip()
-            self._json({"origin": f"{o.lat},{o.lon}", "dest": f"{d.lat},{d.lon}",
-                        "depart": dep.strftime("%Y-%m-%dT%H:%M")})
+            self._json({"origin": "London", "dest": "New York",
+                        "depart": self.server.default_depart.strftime(
+                            "%Y-%m-%dT%H:%M")})
         elif path == "/api/geocode":
             self._handle_geocode(parse_qs(parsed.query))
         elif path == "/api/plan":
@@ -558,11 +569,14 @@ def make_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT, *,
     Pass an explicit `geocoder` to override the planning geocoder entirely.
     """
     if timetable is None:
-        timetable = sample_timetable()
-        if default_depart is None:
-            default_depart = sample_trip()[2]
+        timetable = _default_timetable(online)
     if default_depart is None:
-        default_depart = datetime.now().replace(second=0, microsecond=0)
+        # next 08:00 (synthetic flights depart through the day); a sensible,
+        # always-in-range default for the daily flight network.
+        default_depart = datetime.now().replace(hour=8, minute=0, second=0,
+                                                microsecond=0)
+        if default_depart < datetime.now():
+            default_depart += timedelta(days=1)
     server = HTTPServer((host, port), _Handler)
     server.timetable = timetable
     server.region = region

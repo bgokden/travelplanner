@@ -19,6 +19,7 @@ with `keep` (a set of IATA codes) to keep the Timetable -- and the scan -- small
 import csv
 import os
 import urllib.request
+from collections import Counter
 from datetime import timedelta
 from functools import lru_cache
 
@@ -109,6 +110,44 @@ def load_airports(path: str | None = None, *, download: bool = False) -> tuple:
                 return ()
             path = _download(AIRPORTS_URL)
     return _airport_rows(path)
+
+
+def _route_degree(routes_path: str) -> Counter:
+    """Per-IATA count of directed routes touching that airport (its connectivity)."""
+    degree: Counter = Counter()
+    with open(routes_path, newline="", encoding="utf-8") as f:
+        for row in csv.reader(f):
+            if len(row) < 5:
+                continue
+            for code in (row[2].strip(), row[4].strip()):
+                if code not in _NULL:
+                    degree[code] += 1
+    return degree
+
+
+def load_flight_network(*, min_routes: int = 40, depart_hours=(8, 14),
+                        download: bool = False, airports: str | None = None,
+                        routes: str | None = None) -> Timetable:
+    """A real-airport flight Timetable trimmed to hubs with >= `min_routes` routes.
+
+    Keeps only well-connected airports so the CSA stays fast (~1s) while still
+    covering the airports real trips actually use; `depart_hours` keeps the
+    synthetic schedule small. With no explicit `airports`/`routes` paths it uses
+    the cached OpenFlights data, fetching it when `download=True`; raises
+    FileNotFoundError if it is neither cached nor downloadable.
+    """
+    if airports is None or routes is None:
+        from travelplanner.roads import cache_dir
+        a = os.path.join(cache_dir(), "openflights-airports.dat")
+        r = os.path.join(cache_dir(), "openflights-routes.dat")
+        if download:
+            a, r = _download(AIRPORTS_URL), _download(ROUTES_URL)
+        elif not (os.path.exists(a) and os.path.exists(r)):
+            raise FileNotFoundError(
+                "OpenFlights data is not cached; call with download=True once online")
+        airports, routes = airports or a, routes or r
+    keep = {code for code, n in _route_degree(routes).items() if n >= min_routes}
+    return load_openflights(airports, routes, keep=keep, depart_hours=depart_hours)
 
 
 def search_airports(query: str, *, limit: int = 8, airports=None) -> list[dict]:

@@ -3,8 +3,8 @@
 from datetime import datetime, timedelta
 
 from travelplanner.models import Mode, CostLevel
-from travelplanner.openflights import (load_airports, load_openflights,
-                                       search_airports)
+from travelplanner.openflights import (load_airports, load_flight_network,
+                                       load_openflights, search_airports)
 from travelplanner.graph.schema import NodeType
 from travelplanner.graph.scheduled import ConnectionScan
 
@@ -107,3 +107,13 @@ def test_load_and_search_airports(tmp_path):
     assert search_airports("schip", airports=rows)[0]["iata"] == "AMS"
     assert search_airports("z", airports=rows) == []        # too short
     assert search_airports("nomatch", airports=rows) == []
+
+
+def test_load_flight_network_filters_by_degree(tmp_path):
+    a, r = _feed(tmp_path)
+    # min_routes too high -> no hubs kept -> empty network
+    assert load_flight_network(airports=a, routes=r, min_routes=99).stops == {}
+    # low threshold keeps AMS/ZRH and their flights
+    tt = load_flight_network(airports=a, routes=r, min_routes=1, depart_hours=(8,))
+    assert "AMS" in tt.stops and "ZRH" in tt.stops
+    assert tt.trips and all(t.mode is Mode.FLIGHT for t in tt.trips.values())

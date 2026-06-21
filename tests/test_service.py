@@ -139,7 +139,9 @@ def test_search_stops_excludes_airports():
 
 
 def _running_server():
-    server = make_server("127.0.0.1", 0, online=False)   # offline: deterministic
+    # pin the sample feed so the test is deterministic and never touches the
+    # network or the OpenFlights cache.
+    server = make_server("127.0.0.1", 0, online=False, timetable=sample_timetable())
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     return server, thread
@@ -167,7 +169,7 @@ def test_http_endpoints_end_to_end():
         example = json.loads(body)
         assert {"origin", "dest", "depart"} <= set(example)
 
-        # autocomplete (offline server -> bundled cities)
+        # autocomplete (offline server -> bundled cities; sample feed stations)
         status, body = _get(base, "/api/geocode?q=amsterd")
         sugg = json.loads(body)["suggestions"]
         assert status == 200 and any("Amsterdam" in s["label"] for s in sugg)
@@ -177,9 +179,10 @@ def test_http_endpoints_end_to_end():
         assert any(s["source"] == "station" and "Midvale" in s["label"]
                    for s in midvale)
 
+        # plan over the pinned sample feed (its known-good trip), not the example
         query = urllib.parse.urlencode({
-            "origin": example["origin"], "dest": example["dest"],
-            "depart": example["depart"], "top": "2"})
+            "origin": "47.0,7.005", "dest": "45.0,9.01",
+            "depart": "2026-07-01T08:00", "top": "2"})
         status, body = _get(base, "/api/plan?" + query)
         data = json.loads(body)
         assert status == 200 and data["options"]
