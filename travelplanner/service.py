@@ -28,7 +28,7 @@ from urllib.parse import parse_qs, urlparse
 from travelplanner.catalog import search_cities
 from travelplanner.geocoding import (bundled_geocoder, cached, chain,
                                      nominatim_geocoder, nominatim_search)
-from travelplanner.models import Mode
+from travelplanner.models import LINE_HAUL_MODES, Mode
 from travelplanner.graph.query import Objective
 from travelplanner.graph.schema import NodeType
 from travelplanner.openflights import (load_airports, load_flight_network,
@@ -211,6 +211,18 @@ def plan_response(origin, dest, depart_at: datetime, timetable, *,
         opt = it.to_dict(with_legs=True)
         opt["segments"] = itinerary_segments(it, geometries)
         options.append(opt)
+    # Explain the two confusing outcomes a user actually hits, so an empty or
+    # car-only result reads as honest rather than broken.
+    if not options:
+        warnings.append(
+            "No route found in the demo data near these points -- there may be "
+            "no flights or transit within reach. Try larger cities/airports, or "
+            "points closer to a hub.")
+    elif access in ("transit", "both") and not any(
+            leg.mode in LINE_HAUL_MODES for it in itineraries for leg in it.legs):
+        warnings.append(
+            "No transit or flights reachable from these points; showing direct "
+            "driving only.")
     return {
         "origin": o.to_dict(),
         "dest": d.to_dict(),
@@ -268,6 +280,7 @@ _UI_HTML = """<!doctype html><html><head><meta charset="utf-8">
  .sw{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;
    vertical-align:middle}
  .foot{margin-top:16px;font-size:11px;color:#a0aec0;line-height:1.4}
+ .ep{font-size:12px;color:#4a5568;font-weight:600;margin:6px 0 2px}
 </style></head><body>
 <div id="app">
  <div id="side">
@@ -416,10 +429,23 @@ function drawOption(data, idx){
   document.querySelectorAll('.opt').forEach((e,i) => e.classList.toggle('sel', i===idx));
 }
 
+function endpointsLine(data){
+  const o = data.origin, d = data.dest;
+  return 'From ' + esc(o.name) + ' (' + o.lat.toFixed(2) + ', ' + o.lon.toFixed(2)
+    + ') to ' + esc(d.name) + ' (' + d.lat.toFixed(2) + ', ' + d.lon.toFixed(2) + ')';
+}
+
 function renderResults(data){
   const box = $('results'); box.innerHTML = '';
-  if(!data.options.length){ box.innerHTML = '<p>No route found for these inputs.</p>';
-    clearMap(); setStatus('No route found.'); return; }
+  const warn = (data.warnings && data.warnings.length)
+    ? '\\n' + data.warnings.join('\\n') : '';
+  if(!data.options.length){
+    box.innerHTML = '<div class="ep">'+endpointsLine(data)+'</div>'
+      + '<p>No route found for these inputs.</p>';
+    clearMap(); setStatus((data.warnings && data.warnings[0]) || 'No route found.',
+      true);
+    return; }
+  box.innerHTML = '<div class="ep">'+endpointsLine(data)+'</div>';
   data.options.forEach((opt, i) => {
     const div = document.createElement('div'); div.className = 'opt';
     const arr = new Date(opt.arrive_at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
@@ -436,9 +462,7 @@ function renderResults(data){
     div.onclick = () => drawOption(data, i);
     box.appendChild(div);
   });
-  let st = data.options.length+' option(s). Click one to highlight it.';
-  if(data.warnings && data.warnings.length) st += '\\n'+data.warnings.join('\\n');
-  setStatus(st);
+  setStatus(data.options.length+' option(s). Click one to highlight it.' + warn);
   drawOption(data, 0);
 }
 

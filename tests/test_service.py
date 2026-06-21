@@ -28,6 +28,22 @@ def test_plan_response_shape():
     assert all(len(p) == 2 for p in seg["coords"])  # [lat, lon] pairs
 
 
+def test_plan_response_warns_on_empty_and_transit_fallback():
+    tt = sample_timetable()
+    depart = datetime(2026, 7, 1, 8, 0)
+    # far-apart points the sample feed can't connect -> empty + a clear warning
+    empty = plan_response("0,0", "10,80", depart, tt)
+    assert empty["options"] == []
+    assert empty["warnings"] and "No route" in empty["warnings"][0]
+    # transit access that degrades to a car-only result is flagged
+    o, d, _ = sample_trip()
+    res = plan_response(o, d, depart, tt, access="transit")
+    if res["options"] and not any(
+            leg["mode"] in ("train", "ferry", "flight")
+            for opt in res["options"] for leg in opt["legs"]):
+        assert any("transit" in w for w in res["warnings"])
+
+
 def test_plan_response_rejects_unknown_objective():
     o, d, dep = sample_trip()
     with pytest.raises(ValueError):
