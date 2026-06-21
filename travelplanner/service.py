@@ -26,6 +26,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlparse
 
 from travelplanner.catalog import search_cities
+from travelplanner.geo import haversine
 from travelplanner.geocoding import (bundled_geocoder, cached, chain,
                                      nominatim_geocoder, nominatim_search)
 from travelplanner.models import LINE_HAUL_MODES, Mode
@@ -44,6 +45,9 @@ DEFAULT_PORT = 8000
 USER_AGENT = "travelplanner-demo/1.0 (+https://github.com/bgokden/travelplanner)"
 # Nominatim asks for at most ~1 request/second; throttle network suggestions.
 _NOMINATIM_MIN_INTERVAL = 1.0
+# An OSM hit within this distance of an already-offered city/airport is the same
+# place (their centroids differ slightly), so it is dropped as a duplicate.
+_SUGGEST_DEDUP_KM = 5.0
 
 
 def _build_geocoder(online: bool, user_agent: str):
@@ -108,14 +112,16 @@ def _geocode_suggestions(server, query: str, limit: int) -> list[dict]:
     if key in cache:
         return cache[key]
     out: list = []
-    seen: set = set()              # rounded coords already offered
-    seen_labels: set = set()       # exact labels already offered (drop OSM dups)
+    seen: set = set()        # rounded coords (~110 m): exact-dup across all sources
+    places: list = []        # city/airport coords an OSM hit must not repeat (a
+                             # bundled city and its OSM centroid differ slightly,
+                             # so exact-coord/label matching misses the duplicate)
     for row in search_cities(q, limit=limit):
         label = ", ".join(p for p in (row["name"], row["country"]) if p)
         out.append({"label": label, "lat": row["lat"], "lon": row["lon"],
                     "source": "city"})
         seen.add((round(row["lat"], 3), round(row["lon"], 3)))
-        seen_labels.add(label.lower())
+        places.append((row["lat"], row["lon"]))
     for air in search_airports(q, limit=limit, airports=server.airports):
         if len(out) >= limit:
             break
@@ -128,7 +134,7 @@ def _geocode_suggestions(server, query: str, limit: int) -> list[dict]:
             label += f", {air['country']}"
         out.append({"label": label, "lat": air["lat"], "lon": air["lon"],
                     "source": "airport"})
-        seen_labels.add(label.lower())
+        places.append((air["lat"], air["lon"]))
     for stop in _search_stops(server.timetable, q, limit):
         if len(out) >= limit:
             break
@@ -138,7 +144,6 @@ def _geocode_suggestions(server, query: str, limit: int) -> list[dict]:
         seen.add(ck)
         out.append({"label": stop.name, "lat": stop.lat, "lon": stop.lon,
                     "source": "station"})
-        seen_labels.add(stop.name.lower())
     cacheable = True
     if server.online and len(out) < limit:
         now = time.monotonic()
@@ -146,10 +151,12 @@ def _geocode_suggestions(server, query: str, limit: int) -> list[dict]:
             server.last_nominatim = now
             for r in nominatim_search(q, user_agent=server.user_agent, limit=limit):
                 ck = (round(r["lat"], 3), round(r["lon"], 3))
-                if ck in seen or r["name"].lower() in seen_labels:
+                if ck in seen or any(
+                        haversine(r["lat"], r["lon"], plat, plon) <= _SUGGEST_DEDUP_KM
+                        for plat, plon in places):
                     continue
                 seen.add(ck)
-                seen_labels.add(r["name"].lower())
+                places.append((r["lat"], r["lon"]))
                 out.append({"label": r["name"], "lat": r["lat"], "lon": r["lon"],
                             "source": "osm"})
                 if len(out) >= limit:
