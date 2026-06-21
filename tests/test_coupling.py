@@ -206,6 +206,23 @@ def test_cch_connector_caches_metric_per_day():
     assert conn._road(frozenset(), d1) is not conn._road(frozenset(), d2)  # per-day
 
 
+def test_cch_connector_rejects_out_of_coverage_point():
+    # Regression: a point beyond the road coverage was snapped to an arbitrary far
+    # node, fabricating a drive. Beyond max_snap_km it must yield no road leg.
+    b = RoadGraphBuilder()
+    b.add_node("a", 47.0, 7.0)
+    b.add_node("b", 47.0, 7.02)
+    b.add_road("a", "b", 120)
+    router = CCHRoadRouter(b.build())
+    tt = Timetable()
+    tt.add_stop(_stop("FAR", 47.0, 7.40))      # ~29 km from the graph -> no road node
+    conn = CCHConnector(router, tt.stops, max_access_km=60.0)
+    origin = place("near", LocationType.HOTEL, 47.0, 7.0)
+    assert "FAR" not in conn.access(origin, day=DEP.date())     # within range, off-grid
+    far_dest = place("fardest", LocationType.HOTEL, 47.0, 9.0)  # ~150 km off-grid
+    assert conn.direct(origin, far_dest, day=DEP.date()) is None
+
+
 def test_cch_connector_walks_short_hops():
     """A sub-threshold hop is WALK, not CAR (matching GeometricConnector); a
     longer hop still drives the road network."""
