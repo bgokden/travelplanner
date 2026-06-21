@@ -92,9 +92,12 @@ def _emissions(itin: Itinerary) -> float:
                for leg in itin.legs)
 
 
-def _metrics(itin: Itinerary) -> tuple[float, int, int, float]:
+def _metrics(itin: Itinerary) -> tuple[float, int, int, float, float]:
+    # Emissions is a ranking dimension (GREENEST), so it must be a Pareto axis:
+    # otherwise _pareto could drop a greener-but-slower option before the GREENEST
+    # order key (which ranks by emissions) ever sees it.
     return (itin.total_duration.total_seconds(), itin.cost_level.rank,
-            _transfers(itin), _car_km(itin))
+            _transfers(itin), _car_km(itin), _emissions(itin))
 
 
 def _dominates(a: Itinerary, b: Itinerary) -> bool:
@@ -103,17 +106,17 @@ def _dominates(a: Itinerary, b: Itinerary) -> bool:
 
 
 def _dedupe(cands: list[Itinerary]) -> list[Itinerary]:
-    """Drop only TRULY equivalent candidates. The signature covers all four
-    ranking axes (time, cost, transfers, car_km) plus the mode sequence, so two
-    itineraries that differ on any axis both survive to the Pareto stage -- a
-    cheaper or lower-driving option is never collapsed away by an equal-duration
-    same-mode sibling that happened to be pooled first."""
+    """Drop only TRULY equivalent candidates. The signature covers all five
+    ranking axes (time, cost, transfers, car_km, emissions) plus the mode
+    sequence, so two itineraries that differ on any axis both survive to the
+    Pareto stage -- a cheaper, lower-driving or greener option is never collapsed
+    away by an equal-duration same-mode sibling that happened to be pooled first."""
     seen: set = set()
     out: list[Itinerary] = []
     for c in cands:
-        total, cost, transfers, car_km = _metrics(c)
+        total, cost, transfers, car_km, emissions = _metrics(c)
         sig = (round(total), cost, transfers, round(car_km, 3),
-               tuple(leg.mode.value for leg in c.legs))
+               round(emissions, 1), tuple(leg.mode.value for leg in c.legs))
         if sig in seen:
             continue
         seen.add(sig)
@@ -128,7 +131,7 @@ def _pareto(cands: list[Itinerary]) -> list[Itinerary]:
 
 def _order_key(objective: Objective):
     def key(it: Itinerary):
-        total, cost, transfers, car_km = _metrics(it)
+        total, cost, transfers, car_km, emissions = _metrics(it)
         if objective is Objective.FASTEST:
             return (total, cost, transfers)
         if objective is Objective.CHEAPEST:
@@ -138,8 +141,9 @@ def _order_key(objective: Objective):
         if objective is Objective.GREENEST:
             # least private-car distance first (keep the transit-preferring
             # intent), then least emissions so a train outranks a flight when
-            # both are car-free, then time.
-            return (car_km, _emissions(it), total, transfers, cost)
+            # both are car-free, then time. Emissions is also a Pareto axis
+            # (see _metrics) so the greener option survives the frontier.
+            return (car_km, emissions, total, transfers, cost)
         # AIR_PRIORITY: prefer an itinerary that actually flies. Test for a FLIGHT
         # leg, not primary_mode (the longest leg) -- a long airport-access drive
         # could otherwise make a genuine flight rank as non-air.

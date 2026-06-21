@@ -112,6 +112,41 @@ def test_greenest_prefers_train_over_flight_when_both_car_free():
     assert not any(leg.mode is Mode.CAR for leg in green.legs)
 
 
+def _same_cost_walk_timetable():
+    """A fast flight AND a slower train, BOTH car-free (walk access) and at the
+    SAME cost tier -- so the flight dominates the train on every NON-emissions
+    axis (time, cost, transfers, car_km). Only an emissions Pareto axis keeps the
+    greener train on the frontier."""
+    tt = Timetable()
+    tt.add_stop(Stop("AirO", "origin airport", 47.0, 7.006, NodeType.AIRPORT))
+    tt.add_stop(Stop("AirD", "dest airport", 45.0, 9.006, NodeType.AIRPORT))
+    tt.add_stop(Stop("StO", "origin station", 47.0, 7.004))
+    tt.add_stop(Stop("StD", "dest station", 45.0, 9.004))
+    tt.add_trip(make_trip("FLT", Mode.FLIGHT, [
+        ("AirO", "09:00", "09:00"), ("AirD", "10:00", "10:00")],
+        cost_level=CostLevel.HIGH))
+    tt.add_trip(make_trip("TRN", Mode.TRAIN, [
+        ("StO", "09:00", "09:00"), ("StD", "12:00", "12:00")],
+        cost_level=CostLevel.HIGH))           # SAME cost as the flight
+    return tt
+
+
+def test_greenest_keeps_dominated_greener_train_on_frontier():
+    # Regression: emissions was only a GREENEST sort tiebreaker, not a Pareto
+    # axis, so a same-cost car-free flight DOMINATED the slower car-free train on
+    # (time, cost, transfers, car_km) and _pareto dropped the train before the
+    # emissions key could rank it -- GREENEST then returned the flight. With
+    # emissions as a Pareto axis the greener train survives and GREENEST wins it.
+    tt = _same_cost_walk_timetable()
+    conn = GeometricConnector(tt.stops)
+    green = plan(ORIGIN, DEST, DEP, tt, conn, objective=Objective.GREENEST, top_n=5)
+    assert green[0].primary_mode is Mode.TRAIN
+    assert not any(leg.mode is Mode.CAR for leg in green[0].legs)
+    assert Mode.TRAIN in {it.primary_mode for it in green}   # survived the frontier
+    air = plan(ORIGIN, DEST, DEP, tt, conn, objective=Objective.AIR_PRIORITY)[0]
+    assert air.primary_mode is Mode.FLIGHT                    # air priority still flies
+
+
 def test_low_car_option_survives_frontier():
     """The low-driving option is on the Pareto frontier (not pruned) even though
     it has more transfers and is slower than the flight."""
