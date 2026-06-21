@@ -59,12 +59,29 @@ class Trip:
     validity: Validity = ALWAYS
     cost_level: CostLevel = CostLevel.MEDIUM
 
+    def __post_init__(self) -> None:
+        # Stop times must be non-decreasing (arr0 <= dep0 <= arr1 <= dep1 ...).
+        # A later stop departing before an earlier one breaks the scan's
+        # departure-order precondition and silently strands the trip's tail.
+        times = [t for st in self.stop_times for t in (st.arrival, st.departure)]
+        if any(b < a for a, b in zip(times, times[1:])):
+            raise ValueError(
+                f"trip {self.id!r} stop_times are not in non-decreasing time order")
+
 
 @dataclass(frozen=True)
 class Footpath:
     from_stop: str
     to_stop: str
     duration: timedelta
+
+    def __post_init__(self) -> None:
+        # A non-positive footpath would let a walk reach a stop at or before its
+        # own start (time travel), corrupting earliest-arrival times.
+        if self.duration <= timedelta():
+            raise ValueError(
+                f"footpath {self.from_stop!r}->{self.to_stop!r} must have a "
+                f"positive duration, got {self.duration}")
 
 
 @dataclass(frozen=True)

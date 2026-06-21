@@ -223,3 +223,27 @@ def test_arrival_times_empty_sources():
     tt = Timetable()
     _stop(tt, "A")
     assert ConnectionScan(tt).arrival_times({}) == {}
+
+
+# --- data-validation guards (review: model invariants) ----------------------
+
+def test_non_monotonic_trip_is_rejected():
+    import pytest
+    # A later stop departing before an earlier one would strand the trip's tail.
+    with pytest.raises(ValueError, match="non-decreasing"):
+        make_trip("BAD", Mode.TRAIN, [
+            ("A", "09:30", "09:30"),
+            ("B", "09:40", "09:00"),   # departs 09:00, before A's 09:30
+            ("C", "09:50", "09:50")])
+
+
+def test_non_positive_footpath_is_rejected():
+    import pytest
+    from travelplanner.graph.scheduled.model import Footpath
+    with pytest.raises(ValueError, match="positive duration"):
+        Footpath("A", "B", timedelta(minutes=-5))
+    with pytest.raises(ValueError, match="positive duration"):
+        Footpath("A", "B", timedelta(0))
+    tt = Timetable()
+    with pytest.raises(ValueError, match="positive duration"):
+        tt.add_footpath("A", "B", timedelta(minutes=-1))

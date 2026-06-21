@@ -196,7 +196,10 @@ def load_timetable(feed_dir: str) -> Timetable:
         ordered = tuple(st for _, st in sorted(seq, key=lambda x: x[0]))
         if len(ordered) < 2:
             continue
-        tt.add_trip(Trip(id=tid, mode=mode, stop_times=ordered,
-                         validity=validity, cost_level=_cost_for(mode)))
+        try:
+            tt.add_trip(Trip(id=tid, mode=mode, stop_times=ordered,
+                             validity=validity, cost_level=_cost_for(mode)))
+        except ValueError:
+            continue   # skip a trip with non-monotonic stop_times (invalid data)
 
     return tt
