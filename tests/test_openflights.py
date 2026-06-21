@@ -109,6 +109,22 @@ def test_load_and_search_airports(tmp_path):
     assert search_airports("nomatch", airports=rows) == []
 
 
+def test_load_flight_network_honors_supplied_airports_with_cached_routes(
+        tmp_path, monkeypatch):
+    # Regression: passing airports= with routes=None must honor the supplied
+    # airports path, not raise "not cached" because the cache airports file is
+    # absent. Cache holds only routes; airports is supplied explicitly.
+    import travelplanner.roads as roads
+    a, _ = _feed(tmp_path)
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    (cache / "openflights-routes.dat").write_text(ROUTES, encoding="utf-8")
+    monkeypatch.setattr(roads, "cache_dir", lambda: str(cache))
+    tt = load_flight_network(airports=a, routes=None, min_routes=1,
+                             depart_hours=(8,))
+    assert "AMS" in tt.stops and "ZRH" in tt.stops
+
+
 def test_load_flight_network_filters_by_degree(tmp_path):
     a, r = _feed(tmp_path)
     # min_routes too high -> no hubs kept -> empty network

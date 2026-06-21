@@ -142,10 +142,13 @@ def load_flight_network(*, min_routes: int = 40, depart_hours=(8, 14),
         r = os.path.join(cache_dir(), "openflights-routes.dat")
         if download:
             a, r = _download(AIRPORTS_URL), _download(ROUTES_URL)
-        elif not (os.path.exists(a) and os.path.exists(r)):
+        # Reconcile caller-supplied paths first, then check the EFFECTIVE paths --
+        # a supplied airports/routes path must be honored, not masked by a missing
+        # cache file the caller never asked to use.
+        airports, routes = airports or a, routes or r
+        if not (os.path.exists(airports) and os.path.exists(routes)):
             raise FileNotFoundError(
                 "OpenFlights data is not cached; call with download=True once online")
-        airports, routes = airports or a, routes or r
     keep = {code for code, n in _route_degree(routes).items() if n >= min_routes}
     return load_openflights(airports, routes, keep=keep, depart_hours=depart_hours)
 
