@@ -38,16 +38,27 @@ class RoadConnector(Protocol):
                conditions: frozenset[str], *, day=None) -> AccessLeg | None: ...
 
 
-def _drive_kmh(road_km: float, base_kmh: float) -> float:
-    """Effective driving speed by leg length: short urban/access legs run at the
-    base speed, longer regional and motorway line-haul legs progressively faster.
-    A flat base over (crow-flies x detour) distance nearly doubled the real drive
-    time for long intercity legs."""
-    if road_km <= 30.0:
-        return base_kmh
-    if road_km <= 150.0:
-        return max(base_kmh, 80.0)
-    return max(base_kmh, 100.0)
+# Marginal driving speeds by distance band: the first urban/access kilometres run
+# at the base speed, then regional, then motorway. Each tuple is (band upper bound
+# km, band speed km/h); a band speed below the base is lifted to the base.
+_DRIVE_BANDS = ((30.0, 0.0), (150.0, 80.0), (float("inf"), 100.0))
+
+
+def _drive_seconds(road_km: float, base_kmh: float) -> float:
+    """Drive time integrated over the distance bands (not a single speed picked by
+    total length). Picking one speed by total distance made time discontinuous and
+    NON-monotonic -- a leg just past a band boundary (e.g. 100 km/h above 150 km)
+    came out faster than a shorter one (80 km/h below it). Integrating per band
+    keeps drive time continuous and strictly increasing in distance."""
+    seconds = 0.0
+    lower = 0.0
+    for upper, band_kmh in _DRIVE_BANDS:
+        if road_km <= lower:
+            break
+        band_km = min(road_km, upper) - lower
+        seconds += band_km / max(base_kmh, band_kmh) * 3600.0
+        lower = upper
+    return seconds
 
 
 def _ground_leg(distance_km: float, *, drive_kmh: float, walk_kmh: float,
@@ -56,7 +67,7 @@ def _ground_leg(distance_km: float, *, drive_kmh: float, walk_kmh: float,
         seconds = distance_km / walk_kmh * 3600.0
         return AccessLeg(Mode.WALK, seconds, distance_km, CostLevel.LOW)
     road_km = distance_km * detour
-    seconds = road_km / _drive_kmh(road_km, drive_kmh) * 3600.0
+    seconds = _drive_seconds(road_km, drive_kmh)
     return AccessLeg(Mode.CAR, seconds, road_km, CostLevel.MEDIUM)
 
 

@@ -50,6 +50,17 @@ def test_door_to_door_train_beats_driving():
                    for it in results)
 
 
+def test_drive_time_is_monotonic_in_distance():
+    """Regression: a step speed function chosen by total distance made a leg just
+    past a band boundary (road > 150 km -> 100 km/h) FASTER than a shorter one
+    (road <= 150 km -> 80 km/h). Marginal bracket speeds make drive time strictly
+    increasing in distance with no boundary inversion."""
+    from travelplanner.graph.coupling.connector import _drive_seconds
+    secs = [_drive_seconds(float(km), 60.0) for km in range(0, 400)]
+    assert all(b > a for a, b in zip(secs, secs[1:]))           # strictly increasing
+    assert _drive_seconds(156.0, 60.0) > _drive_seconds(149.5, 60.0)  # no inversion
+
+
 def test_geometric_connector_refuses_transoceanic_ground():
     # New York -> Tokyo straight line is ~10,800 km; the geometric connector
     # must not offer a pure-ground "drive across the ocean" candidate.
