@@ -42,6 +42,8 @@ class RoadConnector(Protocol):
 # at the base speed, then regional, then motorway. Each tuple is (band upper bound
 # km, band speed km/h); a band speed below the base is lifted to the base.
 _DRIVE_BANDS = ((30.0, 0.0), (150.0, 80.0), (float("inf"), 100.0))
+# Speed for the geometric fallback when the road graph can't separate two points.
+_FALLBACK_DRIVE_KMH = 60.0
 
 
 def _drive_seconds(road_km: float, base_kmh: float) -> float:
@@ -239,6 +241,13 @@ class CCHConnector:
             return None
         return (float(path.seconds), self._path_km(path))
 
+    def _coarse_leg(self, d_km: float) -> AccessLeg:
+        # Two distinct points snapped to the SAME road node: the graph is too coarse
+        # to route between them, so estimate geometrically rather than report a
+        # fabricated zero-distance, zero-time drive.
+        return AccessLeg(Mode.CAR, _drive_seconds(d_km, _FALLBACK_DRIVE_KMH),
+                         d_km, CostLevel.MEDIUM)
+
     def _legs_from_point(self, point: Location, conditions, day,
                          to_dest: bool) -> dict[str, AccessLeg]:
         origin_node = self._nearest_node(point.lat, point.lon)
@@ -252,6 +261,9 @@ class CCHConnector:
                 continue
             node = self._stop_node.get(sid)
             if node is None or origin_node is None:   # not within the road coverage
+                continue
+            if node == origin_node:                   # graph too coarse to separate
+                out[sid] = self._coarse_leg(d_km)
                 continue
             a, b = (node, origin_node) if to_dest else (origin_node, node)
             drive = self._drive(a, b, conditions, day)
@@ -281,6 +293,8 @@ class CCHConnector:
         d = self._nearest_node(dest.lat, dest.lon)
         if o is None or d is None:                 # an endpoint outside the coverage
             return None
+        if o == d:                                 # graph too coarse to separate them
+            return self._coarse_leg(d_km)
         drive = self._drive(o, d, conditions, day)
         if drive is None:
             return None

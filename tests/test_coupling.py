@@ -261,6 +261,26 @@ def test_cch_connector_leg_distance_is_routed_length():
     assert leg.distance_km > 30                       # not the old 600s/3600*60 = 10 km
 
 
+def test_cch_connector_same_node_uses_geometric_estimate():
+    # Regression: two distinct points that snap to the same road node yielded a
+    # 0 km / 0 s drive. Fall back to a geometric estimate instead.
+    from travelplanner.geo import haversine
+    b = RoadGraphBuilder()
+    b.add_node("a", 47.0, 7.0)
+    b.add_node("far", 48.0, 8.0)
+    b.add_road("a", "far", 600)
+    router = CCHRoadRouter(b.build())
+    tt = Timetable()
+    tt.add_stop(_stop("NEARA", 47.05, 7.0))       # ~5.5 km from origin, snaps to 'a'
+    conn = CCHConnector(router, tt.stops)
+    origin = place("o", LocationType.HOTEL, 47.0, 7.0)
+    leg = conn.access(origin, day=DEP.date())["NEARA"]
+    assert leg.mode is Mode.CAR
+    expected = haversine(47.0, 7.0, 47.05, 7.0)
+    assert abs(leg.distance_km - expected) < 0.6   # ~5.5 km, not the old 0
+    assert leg.seconds > 0
+
+
 def test_cch_connector_caches_metric_per_day():
     # Regression: the road metric was cached on conditions only, so a connector
     # reused across dates served the first day's (seasonal) metric for every later
