@@ -145,6 +145,27 @@ def test_geocode_suggestions_bundled_then_online(monkeypatch):
     assert any(s["source"] == "osm" and "Zaandam" in s["label"] for s in out)
 
 
+def test_geocode_dedups_osm_by_label(monkeypatch):
+    import travelplanner.service as service
+
+    class _Srv:
+        online = True
+        user_agent = "test"
+        airports = ()
+        geo_cache: dict = {}
+        last_nominatim = 0.0
+
+    srv = _Srv()
+    srv.timetable = sample_timetable()
+    monkeypatch.setattr(service, "nominatim_search", lambda q, **kw: [
+        {"name": "Rotterdam, NL", "lat": 51.92, "lon": 4.48},
+        {"name": "Rotterdam, NL", "lat": 51.93, "lon": 4.49},   # dup label -> dropped
+        {"name": "Rotterdam, NY", "lat": 42.80, "lon": -73.95}])
+    osm = [s for s in service._geocode_suggestions(srv, "rotterdam", 8)
+           if s["source"] == "osm"]
+    assert [s["label"] for s in osm].count("Rotterdam, NL") == 1
+
+
 def test_search_stops_excludes_airports():
     from travelplanner.service import _search_stops
     tt = sample_timetable()

@@ -95,12 +95,14 @@ def _geocode_suggestions(server, query: str, limit: int) -> list[dict]:
     if key in cache:
         return cache[key]
     out: list = []
-    seen: set = set()
+    seen: set = set()              # rounded coords already offered
+    seen_labels: set = set()       # exact labels already offered (drop OSM dups)
     for row in search_cities(q, limit=limit):
         label = ", ".join(p for p in (row["name"], row["country"]) if p)
         out.append({"label": label, "lat": row["lat"], "lon": row["lon"],
                     "source": "city"})
         seen.add((round(row["lat"], 3), round(row["lon"], 3)))
+        seen_labels.add(label.lower())
     for air in search_airports(q, limit=limit, airports=server.airports):
         if len(out) >= limit:
             break
@@ -113,6 +115,7 @@ def _geocode_suggestions(server, query: str, limit: int) -> list[dict]:
             label += f", {air['country']}"
         out.append({"label": label, "lat": air["lat"], "lon": air["lon"],
                     "source": "airport"})
+        seen_labels.add(label.lower())
     for stop in _search_stops(server.timetable, q, limit):
         if len(out) >= limit:
             break
@@ -122,6 +125,7 @@ def _geocode_suggestions(server, query: str, limit: int) -> list[dict]:
         seen.add(ck)
         out.append({"label": stop.name, "lat": stop.lat, "lon": stop.lon,
                     "source": "station"})
+        seen_labels.add(stop.name.lower())
     cacheable = True
     if server.online and len(out) < limit:
         now = time.monotonic()
@@ -129,9 +133,10 @@ def _geocode_suggestions(server, query: str, limit: int) -> list[dict]:
             server.last_nominatim = now
             for r in nominatim_search(q, user_agent=server.user_agent, limit=limit):
                 ck = (round(r["lat"], 3), round(r["lon"], 3))
-                if ck in seen:
+                if ck in seen or r["name"].lower() in seen_labels:
                     continue
                 seen.add(ck)
+                seen_labels.add(r["name"].lower())
                 out.append({"label": r["name"], "lat": r["lat"], "lon": r["lon"],
                             "source": "osm"})
                 if len(out) >= limit:
@@ -300,12 +305,12 @@ _UI_HTML = """<!doctype html><html><head><meta charset="utf-8">
   <input id="depart" type="datetime-local" value="DEFAULT_DEPART">
   <div class="row">
    <div><label>Objective</label>
-    <select id="objective">
-     <option value="air_priority">air priority</option>
-     <option value="fastest">fastest</option>
-     <option value="cheapest">cheapest</option>
-     <option value="fewest_transfers">fewest transfers</option>
-     <option value="greenest">greenest</option>
+    <select id="objective" title="how to rank options">
+     <option value="air_priority" title="prefer flights">air priority</option>
+     <option value="fastest" title="shortest total time">fastest</option>
+     <option value="cheapest" title="lowest cost tier">cheapest</option>
+     <option value="fewest_transfers" title="fewest vehicle changes">fewest transfers</option>
+     <option value="greenest" title="least driving, then lowest emissions">greenest</option>
     </select></div>
    <div><label>Access</label>
     <select id="access">
@@ -342,6 +347,9 @@ function setStatus(msg, isErr){ const s=$('status'); s.textContent=msg||'';
   s.className = isErr ? 'err' : ''; }
 function debounce(fn, ms){ let t; return (...a)=>{clearTimeout(t);
   t=setTimeout(()=>fn(...a), ms);}; }
+function fmtDur(mins){ mins=Math.round(mins); const h=Math.floor(mins/60), m=mins%60;
+  return h ? (m ? h+'h '+m+'m' : h+'h') : m+'m'; }
+function fmtKm(km){ return km < 1 ? 'short walk' : km.toFixed(0)+' km'; }
 
 const SRC_LABEL = {city:'CITY', airport:'AIRPORT', station:'STATION',
   osm:'PLACE', recent:'RECENT'};
@@ -419,8 +427,13 @@ function drawOption(data, idx){
   clearMap();
   const opt = data.options[idx], grp = [];
   opt.segments.forEach(s => {
-    const line = L.polyline(s.coords, {color:s.color, weight:6, opacity:.85}).addTo(map);
-    line.bindPopup(s.label); drawn.push(line); grp.push(line);
+    // ground legs drawn as a single straight line are estimates, not road routes
+    const estimate = s.coords.length <= 2 && (s.mode === 'car' || s.mode === 'walk');
+    const style = {color:s.color, weight:6, opacity: estimate ? 0.65 : 0.85};
+    if(estimate) style.dashArray = '8,8';
+    const line = L.polyline(s.coords, style).addTo(map);
+    line.bindPopup(s.label + (estimate ? ' (straight-line estimate)' : ''));
+    drawn.push(line); grp.push(line);
   });
   const o = data.origin, d = data.dest;
   drawn.push(L.marker([o.lat,o.lon]).addTo(map).bindPopup('Origin: '+esc(o.name)));
@@ -454,9 +467,9 @@ function renderResults(data){
     const legs = opt.legs.map(l =>
       '<div class="leg"><span class="sw" style="background:'+(colors[l.mode]||'#000')+'"></span>'
       + esc(l.mode)+': '+esc(l.from.name)+' &rarr; '+esc(l.to.name)
-      + ' ('+l.distance_km.toFixed(0)+' km)</div>').join('');
+      + ' ('+fmtKm(l.distance_km)+')</div>').join('');
     div.innerHTML = '<div class="t">Option '+(i+1)+' &middot; '
-      + Math.round(opt.total_minutes)+' min</div>'
+      + fmtDur(opt.total_minutes)+'</div>'
       + '<div class="m">'+opt.num_transfers+' transfer(s) &middot; cost '+esc(opt.cost_level)
       + ' &middot; arrive '+arr+'</div><div>'+modes+'</div>'+legs;
     div.onclick = () => drawOption(data, i);
