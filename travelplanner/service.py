@@ -45,9 +45,12 @@ DEFAULT_PORT = 8000
 USER_AGENT = "travelplanner-demo/1.0 (+https://github.com/bgokden/travelplanner)"
 # Nominatim asks for at most ~1 request/second; throttle network suggestions.
 _NOMINATIM_MIN_INTERVAL = 1.0
-# An OSM hit within this distance of an already-offered city/airport is the same
-# place (their centroids differ slightly), so it is dropped as a duplicate.
-_SUGGEST_DEDUP_KM = 5.0
+# An OSM hit that shares a name with an already-offered place AND is within this
+# distance of it is the same place (their centroids differ slightly), so it is
+# dropped as a duplicate. Generous on purpose: the name match -- not distance --
+# discriminates the same place from a distinct nearby one (Vatican vs Rome) or a
+# distant namesake (Paris, Texas).
+_SUGGEST_DEDUP_KM = 50.0
 
 
 def _build_geocoder(online: bool, user_agent: str):
@@ -96,6 +99,12 @@ def _search_stops(timetable, query: str, limit: int) -> list:
     return hits[:limit]
 
 
+def _name_key(label: str) -> str:
+    """First component of a place label, lowercased: bundled 'Paris, France' and
+    the OSM 'Paris, Ile-de-France, France' both reduce to 'paris'."""
+    return label.split(",")[0].strip().lower()
+
+
 def _geocode_suggestions(server, query: str, limit: int) -> list[dict]:
     """Autocomplete candidates: bundled cities first, then OSM (online, throttled).
 
@@ -113,15 +122,16 @@ def _geocode_suggestions(server, query: str, limit: int) -> list[dict]:
         return cache[key]
     out: list = []
     seen: set = set()        # rounded coords (~110 m): exact-dup across all sources
-    places: list = []        # city/airport coords an OSM hit must not repeat (a
-                             # bundled city and its OSM centroid differ slightly,
-                             # so exact-coord/label matching misses the duplicate)
+    places: list = []        # (name_key, lat, lon) of offered places; an OSM hit is
+                             # a duplicate only if it shares a name AND is near one.
+                             # Proximity alone drops distinct nearby places (Vatican
+                             # vs Rome); a name alone drops a distant namesake.
     for row in search_cities(q, limit=limit):
         label = ", ".join(p for p in (row["name"], row["country"]) if p)
         out.append({"label": label, "lat": row["lat"], "lon": row["lon"],
                     "source": "city"})
         seen.add((round(row["lat"], 3), round(row["lon"], 3)))
-        places.append((row["lat"], row["lon"]))
+        places.append((_name_key(row["name"]), row["lat"], row["lon"]))
     for air in search_airports(q, limit=limit, airports=server.airports):
         if len(out) >= limit:
             break
@@ -134,7 +144,7 @@ def _geocode_suggestions(server, query: str, limit: int) -> list[dict]:
             label += f", {air['country']}"
         out.append({"label": label, "lat": air["lat"], "lon": air["lon"],
                     "source": "airport"})
-        places.append((air["lat"], air["lon"]))
+        places.append((_name_key(air["name"]), air["lat"], air["lon"]))
     for stop in _search_stops(server.timetable, q, limit):
         if len(out) >= limit:
             break
@@ -144,6 +154,7 @@ def _geocode_suggestions(server, query: str, limit: int) -> list[dict]:
         seen.add(ck)
         out.append({"label": stop.name, "lat": stop.lat, "lon": stop.lon,
                     "source": "station"})
+        places.append((_name_key(stop.name), stop.lat, stop.lon))
     cacheable = True
     if server.online and len(out) < limit:
         now = time.monotonic()
@@ -151,12 +162,14 @@ def _geocode_suggestions(server, query: str, limit: int) -> list[dict]:
             server.last_nominatim = now
             for r in nominatim_search(q, user_agent=server.user_agent, limit=limit):
                 ck = (round(r["lat"], 3), round(r["lon"], 3))
+                nkey = _name_key(r["name"])
                 if ck in seen or any(
-                        haversine(r["lat"], r["lon"], plat, plon) <= _SUGGEST_DEDUP_KM
-                        for plat, plon in places):
+                        nkey == pkey
+                        and haversine(r["lat"], r["lon"], plat, plon) <= _SUGGEST_DEDUP_KM
+                        for pkey, plat, plon in places):
                     continue
                 seen.add(ck)
-                places.append((r["lat"], r["lon"]))
+                places.append((nkey, r["lat"], r["lon"]))
                 out.append({"label": r["name"], "lat": r["lat"], "lon": r["lon"],
                             "source": "osm"})
                 if len(out) >= limit:

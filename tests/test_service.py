@@ -158,51 +158,72 @@ def test_geocode_suggestions_bundled_then_online(monkeypatch):
     assert any(s["source"] == "osm" and "Zaandam" in s["label"] for s in out)
 
 
-def test_geocode_dedups_osm_by_proximity(monkeypatch):
-    import travelplanner.service as service
-
+def _online_geo_server():
     class _Srv:
         online = True
         user_agent = "test"
         airports = ()
         geo_cache: dict = {}
         last_nominatim = 0.0
-
     srv = _Srv()
     srv.timetable = sample_timetable()
-    # Zaandam is not a bundled city, so these come straight from OSM. Two hits at
-    # the same place (within the dedup radius) collapse to one; a same-named place
-    # far away is kept.
+    return srv
+
+
+def test_geocode_dedups_osm_by_name_and_proximity(monkeypatch):
+    import travelplanner.service as service
+    srv = _online_geo_server()
+    # Zaandam is not bundled, so all four come from OSM. Same place under two
+    # different labels ~1.3 km apart collapses (the old label-equality dedup kept
+    # both); a same-named place far away and a distinct nearby place both survive.
     monkeypatch.setattr(service, "nominatim_search", lambda q, **kw: [
-        {"name": "Zaandam, NL", "lat": 52.44, "lon": 4.83},
-        {"name": "Zaandam, NL", "lat": 52.45, "lon": 4.84},     # ~1.3 km -> dropped
-        {"name": "Zaandam, Far", "lat": 40.00, "lon": -80.00}])
-    osm = [s for s in service._geocode_suggestions(srv, "zaandam", 8)
-           if s["source"] == "osm"]
-    assert len(osm) == 2
-    assert {(round(s["lat"], 2), round(s["lon"], 2)) for s in osm} == {
-        (52.44, 4.83), (40.00, -80.0)}
+        {"name": "Zaandam, Noord-Holland, Nederland", "lat": 52.44, "lon": 4.83},
+        {"name": "Zaandam, NH", "lat": 52.45, "lon": 4.84},        # same name near -> drop
+        {"name": "Zaandam, Texas, USA", "lat": 40.00, "lon": -80.0},  # namesake far -> keep
+        {"name": "Koog aan de Zaan, NL", "lat": 52.46, "lon": 4.81}])  # diff name near -> keep
+    labels = [s["label"] for s in service._geocode_suggestions(srv, "zaandam", 8)
+              if s["source"] == "osm"]
+    assert "Zaandam, Noord-Holland, Nederland" in labels
+    assert "Zaandam, NH" not in labels
+    assert "Zaandam, Texas, USA" in labels
+    assert "Koog aan de Zaan, NL" in labels
 
 
 def test_geocode_osm_does_not_duplicate_bundled_city(monkeypatch):
     import travelplanner.service as service
-
-    class _Srv:
-        online = True
-        user_agent = "test"
-        airports = ()
-        geo_cache: dict = {}
-        last_nominatim = 0.0
-
-    srv = _Srv()
-    srv.timetable = sample_timetable()
-    # Nominatim returns Paris at a slightly different centroid than the bundled
-    # city; the old label-equality dedup missed this and offered Paris twice.
+    srv = _online_geo_server()
+    # OSM returns Paris ~6 km from the bundled centroid (escaping the ~110 m coord
+    # check) under a different label; name+proximity still drops it as the same
+    # place, so Paris is offered once (the bundled city).
     monkeypatch.setattr(service, "nominatim_search", lambda q, **kw: [
-        {"name": "Paris, Ile-de-France, France", "lat": 48.857, "lon": 2.352}])
+        {"name": "Paris, Ile-de-France, France", "lat": 48.90, "lon": 2.40}])
     paris = [s for s in service._geocode_suggestions(srv, "paris", 8)
-             if abs(s["lat"] - 48.8566) < 0.05 and abs(s["lon"] - 2.3522) < 0.05]
+             if "paris" in s["label"].lower()]
     assert len(paris) == 1 and paris[0]["source"] == "city"
+
+
+def test_geocode_keeps_distinct_nearby_place(monkeypatch):
+    import travelplanner.service as service
+    srv = _online_geo_server()
+    # A distinct place near a bundled city (Vatican City ~3.5 km from Rome) has a
+    # different name, so proximity must NOT drop it (regression: pure-distance
+    # dedup hid it).
+    monkeypatch.setattr(service, "nominatim_search", lambda q, **kw: [
+        {"name": "Citta del Vaticano, Roma, Italia", "lat": 41.9028, "lon": 12.4534}])
+    sugg = service._geocode_suggestions(srv, "rome", 8)
+    assert any(s["source"] == "osm" and "Vaticano" in s["label"] for s in sugg)
+
+
+def test_geocode_dedups_station_against_osm(monkeypatch):
+    import travelplanner.service as service
+    srv = _online_geo_server()
+    # An OSM hit sharing a station's name and near it is the same place; it must
+    # not be offered a second time (regression: stations were not deduped at all).
+    monkeypatch.setattr(service, "nominatim_search", lambda q, **kw: [
+        {"name": "Westport Station, Westport", "lat": 47.005, "lon": 7.025}])
+    sugg = service._geocode_suggestions(srv, "westport", 8)
+    westports = [s for s in sugg if "westport station" in s["label"].lower()]
+    assert len(westports) == 1 and westports[0]["source"] == "station"
 
 
 def test_search_stops_excludes_airports():
