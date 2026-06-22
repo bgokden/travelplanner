@@ -85,6 +85,21 @@ def test_plan_over_tz_aware_feed_reads_depart_as_origin_local():
     assert it.depart_at.strftime("%H:%M") == "08:00"   # same wall clock as input
 
 
+def test_fill_missing_tz_uses_nearest_located_stop():
+    # Regression (Bug 1): a tz-less stop joined to a tz-aware table takes the
+    # nearest located zone, not the table's most-common one.
+    from travelplanner.graph.scheduled import fill_missing_tz
+    tt = Timetable()
+    tt.add_stop(Stop("AMS", "Schiphol", 52.31, 4.77, tz="Europe/Amsterdam"))
+    tt.add_stop(Stop("JFK", "JFK", 40.64, -73.78, tz="America/New_York"))
+    tt.add_stop(Stop("NL1", "Dutch stop", 52.30, 4.80))     # tz-less, near AMS
+    tt.add_stop(Stop("US1", "US stop", 40.70, -73.90))      # tz-less, near JFK
+    fill_missing_tz(tt)
+    assert tt.stops["NL1"].tz == "Europe/Amsterdam"          # nearest = AMS
+    assert tt.stops["US1"].tz == "America/New_York"          # nearest = JFK
+    assert tt.stops["AMS"].tz == "Europe/Amsterdam"          # located stops unchanged
+
+
 def test_eastbound_cross_zone_short_hop_stays_routable():
     # Regression (Bug 4): a 30-min hop from a UTC+0 stop to a UTC+1 stop. Under
     # per-stop materialization the UTC arrival preceded the UTC departure, so the

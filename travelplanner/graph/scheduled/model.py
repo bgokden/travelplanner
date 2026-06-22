@@ -10,7 +10,7 @@ known limitation to be addressed when international air schedules are added.
 """
 
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -320,6 +320,27 @@ def merge_timetables(*timetables: Timetable) -> Timetable:
             merged.trips.setdefault(tid, trip)
         merged.footpaths.extend(tt.footpaths)
     return merged
+
+
+def fill_missing_tz(tt: Timetable) -> Timetable:
+    """Give every tz-less stop the timezone of its nearest tz-bearing stop.
+
+    When a feed with no timezone data (a GTFS feed lacking agency_timezone) is
+    merged into a tz-aware timetable (e.g. the flight network), its stops would
+    otherwise inherit the table's single most-common zone -- geographically wrong
+    if the trip spans zones. Filling from the nearest located stop keeps each one
+    in a sensible local zone. Mutates and returns `tt`; a no-op when no stop has a
+    timezone or all already do.
+    """
+    from travelplanner.geo import haversine
+    have = [s for s in tt.stops.values() if s.tz]
+    missing = [s for s in tt.stops.values() if not s.tz]
+    if not have or not missing:
+        return tt
+    for s in missing:
+        nearest = min(have, key=lambda h: haversine(s.lat, s.lon, h.lat, h.lon))
+        tt.stops[s.id] = replace(s, tz=nearest.tz)
+    return tt
 
 
 def clip_timetable(tt: Timetable, min_lat: float, min_lon: float,

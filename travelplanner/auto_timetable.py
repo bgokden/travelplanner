@@ -18,7 +18,7 @@ from travelplanner.openflights import airports_near, load_openflights
 from travelplanner.transit_catalog import (
     Feed, catalog, cached_catalog, feeds_for_trip, fetch_feed)
 from travelplanner.graph.scheduled import (
-    Timetable, clip_timetable, load_timetable, merge_timetables)
+    Timetable, clip_timetable, fill_missing_tz, load_timetable, merge_timetables)
 
 
 @lru_cache(maxsize=8)
@@ -91,4 +91,6 @@ def build_default_timetable(origin, dest, *, download: bool = True,
                 continue
             parts.append(clip_timetable(full, *bbox))
 
-    return merge_timetables(*parts), notes
+    # A tz-less ground feed joined to the tz-aware flight network gets each of its
+    # stops the nearest located zone, instead of the table's most-common one.
+    return fill_missing_tz(merge_timetables(*parts)), notes
