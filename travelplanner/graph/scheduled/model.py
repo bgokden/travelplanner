@@ -220,18 +220,24 @@ class Timetable:
             return None
         return nearest.tz or self._default_tz()
 
-    def _materialize(self, day_midnight: datetime, stop_id: str,
-                     offset: timedelta, default_tz: str | None) -> datetime:
-        """Absolute UTC datetime for a stop-time offset on a service day.
-
-        The offset is wall-clock from the stop's local service-day midnight (GTFS
-        hours may exceed 24 for overnight runs), so localize in the stop's zone
-        and convert to UTC -- zoneinfo applies the correct DST offset at that wall
-        time. With no zone available it falls back to UTC.
-        """
-        stop = self.stops.get(stop_id)
+    def _trip_zone(self, first_stop_id: str, default_tz: str | None):
+        """The single zone a trip's stop-times are expressed in: its first stop's
+        zone. GTFS stop_times are ALL in the agency timezone (carried by every
+        stop, so the first stop has it); OpenFlights expresses a flight's arrival
+        offset relative to the departure airport, so the departure (first) zone is
+        correct for both. Using one zone per trip -- rather than each stop's own --
+        keeps a cross-timezone leg monotonic in UTC instead of appearing to arrive
+        before it departed."""
+        stop = self.stops.get(first_stop_id)
         name = (stop.tz if stop and stop.tz else default_tz)
-        zone = _zone(name) if name else _UTC
+        return _zone(name) if name else _UTC
+
+    def _materialize(self, day_midnight: datetime, offset: timedelta,
+                     zone) -> datetime:
+        """Absolute UTC datetime for a stop-time offset on a service day, taken in
+        the trip's `zone`. The offset is wall-clock from local service-day
+        midnight (GTFS hours may exceed 24 for overnight runs); zoneinfo applies
+        the correct DST offset at that wall time."""
         return (day_midnight.replace(tzinfo=zone) + offset).astimezone(_UTC)
 
     def connections(self, start: datetime, end: datetime,
@@ -266,14 +272,14 @@ class Timetable:
                     continue
                 sts = trip.stop_times
                 run_id = f"{trip.id}@{iso}"
+                trip_zone = (self._trip_zone(sts[0].stop_id, default_tz)
+                             if aware else None)
                 segs: list[Connection] = []
                 boardable = False
                 for a, b in zip(sts, sts[1:]):
                     if aware:
-                        dep = self._materialize(midnight, a.stop_id,
-                                                a.departure, default_tz)
-                        arr = self._materialize(midnight, b.stop_id,
-                                                b.arrival, default_tz)
+                        dep = self._materialize(midnight, a.departure, trip_zone)
+                        arr = self._materialize(midnight, b.arrival, trip_zone)
                     else:
                         dep = midnight + a.departure
                         arr = midnight + b.arrival

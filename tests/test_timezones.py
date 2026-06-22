@@ -15,13 +15,14 @@ ZRH = ZoneInfo("Europe/Zurich")
 
 
 def test_international_flight_materializes_in_utc():
-    # Stop-time offsets are wall-clock in each stop's own zone: depart 12:00 local
-    # New York (16:00 UTC in July), arrive 22:00 local Amsterdam (20:00 UTC).
+    # A trip's stop-time offsets are in its FIRST stop's zone (GTFS agency-tz
+    # convention): here New York. Depart 12:00 (16:00 UTC in July), arrive at the
+    # 16:00 offset = 20:00 UTC, which displays as 22:00 local Amsterdam.
     tt = Timetable()
     tt.add_stop(Stop("JFK", "New York JFK", 40.64, -73.78, tz="America/New_York"))
     tt.add_stop(Stop("AMS", "Amsterdam", 52.31, 4.77, tz="Europe/Amsterdam"))
     tt.add_trip(make_trip("FL1", Mode.FLIGHT, [
-        ("JFK", "12:00", "12:00"), ("AMS", "22:00", "22:00")],
+        ("JFK", "12:00", "12:00"), ("AMS", "16:00", "16:00")],
         cost_level=CostLevel.HIGH))
     src = datetime(2026, 7, 1, 6, 0, tzinfo=NY)        # aware seed, before departure
     j = ConnectionScan(tt).query({"JFK": src}, "AMS")
@@ -84,6 +85,22 @@ def test_plan_over_tz_aware_feed_reads_depart_as_origin_local():
     assert it.depart_at.strftime("%H:%M") == "08:00"   # same wall clock as input
 
 
+def test_eastbound_cross_zone_short_hop_stays_routable():
+    # Regression (Bug 4): a 30-min hop from a UTC+0 stop to a UTC+1 stop. Under
+    # per-stop materialization the UTC arrival preceded the UTC departure, so the
+    # segment was dropped and B was unroutable; per-trip (first-stop) zone keeps
+    # the leg monotonic in UTC.
+    tt = Timetable()
+    tt.add_stop(Stop("A", "A", 64.1, -21.9, tz="Atlantic/Reykjavik"))   # UTC+0
+    tt.add_stop(Stop("B", "B", 51.5, -0.1, tz="Europe/London"))          # BST UTC+1
+    tt.add_trip(make_trip("X", Mode.TRAIN, [
+        ("A", "10:00", "10:00"), ("B", "10:30", "10:30")]))
+    j = ConnectionScan(tt, horizon=timedelta(hours=6)).query(
+        {"A": datetime(2026, 7, 1, 9, 0, tzinfo=ZoneInfo("Atlantic/Reykjavik"))}, "B")
+    assert j is not None
+    assert j.arrive == datetime(2026, 7, 1, 10, 30, tzinfo=UTC)   # monotonic, routable
+
+
 def test_aware_depart_over_naive_feed_does_not_crash():
     # Regression: a naive (no-timezone) feed with an AWARE departure must not
     # raise on a naive-vs-aware comparison; the tz is shed, the wall clock kept.
@@ -107,8 +124,10 @@ def test_international_itinerary_legs_carry_local_zones():
     tt = Timetable()
     tt.add_stop(Stop("AMS", "Schiphol", 52.31, 4.77, tz="Europe/Amsterdam"))
     tt.add_stop(Stop("JFK", "New York JFK", 40.64, -73.78, tz="America/New_York"))
+    # Offsets are in the first stop's zone (Amsterdam): depart 10:00 (08:00 UTC),
+    # arrive at the 18:00 offset = 16:00 UTC, which displays as 12:00 New York.
     tt.add_trip(make_trip("FL", Mode.FLIGHT, [
-        ("AMS", "10:00", "10:00"), ("JFK", "12:00", "12:00")],
+        ("AMS", "10:00", "10:00"), ("JFK", "18:00", "18:00")],
         cost_level=CostLevel.HIGH))
     origin = Location("Amsterdam", LocationType.CITY, 52.30, 4.76)
     dest = Location("New York", LocationType.CITY, 40.65, -73.79)
