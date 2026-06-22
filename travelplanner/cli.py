@@ -3,8 +3,10 @@
   travelplanner demo                          run the bundled multimodal sample
   travelplanner plan ORIGIN DEST [--gtfs DIR] plan a door-to-door trip
 
-ORIGIN/DEST are either "lat,lon" or a bundled city name. With no --gtfs, the
-bundled sample timetable is used.
+ORIGIN/DEST are either "lat,lon" or a bundled city name. With no --gtfs, a
+timetable is auto-composed for the trip (flights + GTFS feeds by location,
+downloaded and cached on first use); pass --gtfs to use a specific feed, or run
+'demo' for the offline bundled sample.
 """
 
 import argparse
@@ -58,12 +60,13 @@ def _cmd_demo(_args) -> int:
 
 
 def _cmd_plan(args) -> int:
-    from travelplanner.graph.coupling import GeometricConnector, plan
+    import warnings
+    from travelplanner.trips import plan_trip
     from travelplanner.graph.scheduled import load_timetable
-    from travelplanner.samples import sample_timetable
 
-    tt = load_timetable(args.gtfs) if args.gtfs else sample_timetable()
-    conn = GeometricConnector(tt.stops)
+    # No --gtfs: auto-compose a timetable for the trip (flights + GTFS by
+    # location). An explicit --gtfs loads that feed instead.
+    tt = load_timetable(args.gtfs) if args.gtfs else None
     at = (datetime.fromisoformat(args.at) if args.at
           else datetime.now().replace(microsecond=0))
     try:
@@ -73,10 +76,17 @@ def _cmd_plan(args) -> int:
         print(f"error: {exc}")
         return 2
 
-    results = plan(origin, dest, at, tt, conn,
-                   objective=Objective(args.objective))
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        results = plan_trip(origin, dest, at, tt,
+                            objective=Objective(args.objective))
+    source = args.gtfs if args.gtfs else "auto (flights + GTFS by location)"
     print(f"Plan: {origin.name} -> {dest.name}  departing {at:%Y-%m-%d %H:%M}"
-          f"  [{args.objective}]\n")
+          f"  [{args.objective}]  data: {source}\n")
+    for w in caught:
+        print(f"note: {w.message}")
+    if caught:
+        print()
     if not results:
         print("no itinerary found")
         return 0
@@ -150,7 +160,8 @@ def main(argv=None) -> int:
     p = sub.add_parser("plan", help="plan a door-to-door trip")
     p.add_argument("origin", help='"lat,lon" or a bundled city name')
     p.add_argument("destination", help='"lat,lon" or a bundled city name')
-    p.add_argument("--gtfs", help="GTFS feed directory (default: bundled sample)")
+    p.add_argument("--gtfs", help="GTFS feed directory (default: auto-compose "
+                   "flights + GTFS for the trip; needs network on first use)")
     p.add_argument("--at", help="departure time, ISO format (default: now)")
     p.add_argument("--objective", choices=[o.value for o in Objective],
                    default="air_priority", help="ranking objective")
