@@ -1,9 +1,9 @@
 """Runnable real-life scenarios for the travelplanner engine.
 
-These are the examples used in docs/how-it-works.html, with the full setup
+These are the examples used in docs/how-it-works.md, with the full setup
 (origin, destination, timetable, connector) visible. Run them directly:
 
-    python examples/scenarios.py
+    uv run python examples/scenarios.py
 
 Times are naive local; all stops here are within one timezone (Central
 European), so no cross-timezone conversion is involved.

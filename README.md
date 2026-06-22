@@ -188,11 +188,10 @@ faster drive-to-airport flight; the other objectives are unaffected.
 
 ## Learn more
 
-- A visual walkthrough with worked, real-output examples:
-  [`docs/how-it-works.html`](docs/how-it-works.html) (rendered preview:
-  `docs/how-it-works.png`).
+- A walkthrough with worked, real-output examples:
+  [`docs/how-it-works.md`](docs/how-it-works.md).
 - Runnable example scenarios (full setup visible):
-  [`examples/scenarios.py`](examples/scenarios.py) — `python examples/scenarios.py`.
+  [`examples/scenarios.py`](examples/scenarios.py) — `uv run python examples/scenarios.py`.
 
 ## License
 
