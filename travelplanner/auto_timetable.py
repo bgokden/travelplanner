@@ -12,12 +12,21 @@ the caller can surface it rather than return a silent empty result.
 """
 
 import zipfile
+from functools import lru_cache
 
 from travelplanner.openflights import airports_near, load_openflights
 from travelplanner.transit_catalog import (
-    catalog, cached_catalog, feeds_for_trip, fetch_feed)
+    Feed, catalog, cached_catalog, feeds_for_trip, fetch_feed)
 from travelplanner.graph.scheduled import (
     Timetable, clip_timetable, load_timetable, merge_timetables)
+
+
+@lru_cache(maxsize=8)
+def _load_feed(feed: Feed) -> Timetable:
+    """Parse a feed's GTFS once and reuse it across trips. Parsing a national
+    feed is the slow part; clipping the cached result to each corridor is cheap.
+    Feed is a frozen dataclass, so it is a valid cache key."""
+    return load_timetable(fetch_feed(feed))
 
 # Padding around the origin-destination bounding box when clipping a feed to the
 # corridor (~0.6 deg ~= 65 km), enough to keep access stops and a realistic route.
@@ -37,7 +46,7 @@ def _corridor_bbox(points, margin: float):
 
 
 def build_default_timetable(origin, dest, *, download: bool = True,
-                            max_feeds: int = 2, air: bool = True,
+                            max_feeds: int = 1, air: bool = True,
                             ground: bool = True) -> tuple[Timetable, list[str]]:
     """Compose (Timetable, notes) for this trip with no feed supplied.
 
@@ -70,7 +79,7 @@ def build_default_timetable(origin, dest, *, download: bool = True,
         bbox = _corridor_bbox([o, d], _CORRIDOR_MARGIN_DEG)
         for feed in feeds[:max_feeds]:
             try:
-                full = load_timetable(fetch_feed(feed))
+                full = _load_feed(feed)
             except (OSError, zipfile.BadZipFile, ValueError) as exc:
                 notes.append(f"feed {feed.id} ({feed.name}) unavailable: {exc}")
                 continue
