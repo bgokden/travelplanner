@@ -67,11 +67,17 @@ def build_default_timetable(origin, dest, *, download: bool = True,
                 parts.append(load_openflights(keep=keep, download=download))
             else:
                 notes.append("no airports near the trip; air skipped")
-        except (FileNotFoundError, ValueError) as exc:
+        except (OSError, ValueError) as exc:
+            # OSError covers urllib's URLError/HTTPError/socket timeouts on a
+            # failed download, so a network blip degrades to a note, not a crash.
             notes.append(f"flight network unavailable: {exc}")
 
     if ground:
-        cat = catalog() if download else cached_catalog()
+        try:
+            cat = catalog() if download else cached_catalog()
+        except (OSError, ValueError) as exc:
+            cat = {}
+            notes.append(f"transit catalog unavailable: {exc}")
         feeds = feeds_for_trip(o, d, catalog=cat)
         if not feeds:
             notes.append("no GTFS feed in the catalog covers this trip "

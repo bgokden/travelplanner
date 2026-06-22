@@ -280,6 +280,11 @@ def _normalize_depart(origin: Location, depart_at: datetime,
     it against UTC-materialized connections. A naive depart_at over a feed with no
     timezone data, or an already-aware depart_at, is left untouched.
     """
+    if not timetable.tz_aware():
+        # Naive feed: keep the whole pipeline naive (the access/egress legs and
+        # the connections are naive), so an aware depart_at must shed its tzinfo
+        # or it would crash comparing against naive connection times.
+        return depart_at.replace(tzinfo=None) if depart_at.tzinfo else depart_at
     if depart_at.tzinfo is not None:
         return depart_at
     name = timetable.zone_for_point(origin.lat, origin.lon)

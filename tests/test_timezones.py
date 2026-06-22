@@ -84,6 +84,23 @@ def test_plan_over_tz_aware_feed_reads_depart_as_origin_local():
     assert it.depart_at.strftime("%H:%M") == "08:00"   # same wall clock as input
 
 
+def test_aware_depart_over_naive_feed_does_not_crash():
+    # Regression: a naive (no-timezone) feed with an AWARE departure must not
+    # raise on a naive-vs-aware comparison; the tz is shed, the wall clock kept.
+    tt = Timetable()
+    tt.add_stop(Stop("A", "A", 47.0, 8.0))            # no tz -> naive feed
+    tt.add_stop(Stop("B", "B", 47.5, 8.6))
+    tt.add_trip(make_trip("T", Mode.TRAIN, [
+        ("A", "09:00", "09:00"), ("B", "10:00", "10:00")]))
+    origin = Location("O", LocationType.HOTEL, 47.0, 8.0)
+    dest = Location("D", LocationType.HOTEL, 47.5, 8.6)
+    aware = datetime(2026, 7, 1, 8, 0, tzinfo=UTC)
+    assert plan(origin, dest, aware, tt, GeometricConnector(tt.stops))  # no crash
+    # CSA level too: aware sources over a naive timetable resolve in naive time.
+    j = ConnectionScan(tt).query({"A": aware}, "B")
+    assert j is not None and j.arrive == datetime(2026, 7, 1, 10, 0)
+
+
 def test_international_itinerary_legs_carry_local_zones():
     # A transatlantic flight: each leg endpoint carries its own zone so the
     # output can render leave-Amsterdam / land-New-York in local time.

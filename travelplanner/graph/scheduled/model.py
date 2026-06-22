@@ -195,7 +195,10 @@ class Timetable:
         so the scan stays naive.
         """
         if not self.tz_aware():
-            return when
+            # Naive feed: the scan compares against naive materialized times, so
+            # an aware source would raise on comparison -- drop the tzinfo, keeping
+            # its wall clock as the feed's local time.
+            return when.replace(tzinfo=None) if when.tzinfo is not None else when
         if when.tzinfo is not None:
             return when.astimezone(_UTC)
         stop = self.stops.get(stop_id)

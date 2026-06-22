@@ -75,3 +75,23 @@ def test_no_air_when_too_few_nearby_airports(monkeypatch):
     tt, notes = auto_timetable.build_default_timetable(O, D, ground=False)
     assert tt.trips == {}
     assert any("no airports near" in n for n in notes)
+
+
+def test_catalog_download_failure_degrades_to_note(monkeypatch):
+    def boom():
+        raise OSError("network down")
+    monkeypatch.setattr(auto_timetable, "catalog", boom)
+    tt, notes = auto_timetable.build_default_timetable(O, D, air=False)
+    assert tt.trips == {}
+    assert any("catalog unavailable" in n for n in notes)       # no crash
+
+
+def test_air_download_failure_degrades_to_note(monkeypatch):
+    from urllib.error import URLError
+
+    def boom(pts, r, download):
+        raise URLError("no network")                            # OSError subclass
+    monkeypatch.setattr(auto_timetable, "airports_near", boom)
+    monkeypatch.setattr(auto_timetable, "catalog", lambda: {})
+    tt, notes = auto_timetable.build_default_timetable(O, D)
+    assert any("flight network unavailable" in n for n in notes)  # no crash
