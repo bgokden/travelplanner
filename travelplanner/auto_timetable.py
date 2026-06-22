@@ -12,9 +12,8 @@ the caller can surface it rather than return a silent empty result.
 """
 
 import zipfile
-from functools import lru_cache
 
-from travelplanner.openflights import load_flight_network
+from travelplanner.openflights import airports_near, load_openflights
 from travelplanner.transit_catalog import (
     catalog, cached_catalog, feeds_for_trip, fetch_feed)
 from travelplanner.graph.scheduled import (
@@ -24,11 +23,10 @@ from travelplanner.graph.scheduled import (
 # corridor (~0.6 deg ~= 65 km), enough to keep access stops and a realistic route.
 _CORRIDOR_MARGIN_DEG = 0.6
 
-
-@lru_cache(maxsize=2)
-def _flight_network(download: bool) -> Timetable:
-    """The OpenFlights synthetic flight network, built once per process."""
-    return load_flight_network(download=download)
+# Only airports within this distance of an endpoint can serve the trip; scoping
+# the synthetic flight network to them keeps the scan fast (the full global
+# network is ~44k synthetic flights).
+_AIRPORT_RADIUS_KM = 250.0
 
 
 def _corridor_bbox(points, margin: float):
@@ -55,10 +53,13 @@ def build_default_timetable(origin, dest, *, download: bool = True,
 
     if air:
         try:
-            parts.append(_flight_network(download))
-        except FileNotFoundError:
-            notes.append("flight network unavailable (no cached OpenFlights data; "
-                         "needs one online run)")
+            keep = airports_near([o, d], _AIRPORT_RADIUS_KM, download=download)
+            if len(keep) >= 2:
+                parts.append(load_openflights(keep=keep, download=download))
+            else:
+                notes.append("no airports near the trip; air skipped")
+        except (FileNotFoundError, ValueError) as exc:
+            notes.append(f"flight network unavailable: {exc}")
 
     if ground:
         cat = catalog() if download else cached_catalog()

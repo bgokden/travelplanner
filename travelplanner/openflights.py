@@ -159,6 +159,21 @@ def load_flight_network(*, min_routes: int = 40, depart_hours=(8, 14),
     return load_openflights(airports, routes, keep=keep, depart_hours=depart_hours)
 
 
+def airports_near(points, radius_km: float, *, download: bool = False) -> set[str]:
+    """IATA codes of airports within radius_km of any (lat, lon) in `points`.
+
+    Used to scope the synthetic flight network to a specific trip -- only airports
+    a traveler could reasonably reach from the origin or destination -- so the
+    scan does not wade through the whole global network."""
+    keep: set[str] = set()
+    for r in load_airports(download=download):
+        for lat, lon in points:
+            if haversine(r["lat"], r["lon"], lat, lon) <= radius_km:
+                keep.add(r["iata"])
+                break
+    return keep
+
+
 def search_airports(query: str, *, limit: int = 8, airports=None) -> list[dict]:
     """Airports matching `query`: exact IATA first, then name/city prefix, then any.
 
