@@ -188,6 +188,12 @@ All notable changes to this project are documented here. The format is based on
 - `Location` validates lat/lon range, so invalid coordinates raise instead of
   silently producing an empty `plan()` result (empty now means "no route", not
   "bad input").
+- Auto-sourced data now refreshes on a max-age TTL instead of caching forever: the
+  Mobility Database catalog and GTFS feeds after 7 days, OpenFlights after 30
+  (`CATALOG_MAX_AGE`/`FEED_MAX_AGE`/`OPENFLIGHTS_MAX_AGE`; a stale feed zip is
+  re-extracted). The refresh is offline-first via `roads.refresh_if_stale`: if a
+  refresh fails but a cached copy exists, that copy is used with a warning rather
+  than failing, so a network blip never breaks an otherwise-usable cache.
 
 ### Fixed
 - Geofabrik geometry catalog: `refresh=True` now re-downloads the index on every

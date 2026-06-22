@@ -2,7 +2,13 @@
 
 import csv
 import io
+import os
+import zipfile
+from datetime import timedelta
 
+import pytest
+
+from travelplanner import transit_catalog
 from travelplanner.transit_catalog import (
     _dir_with_stops, _parse_catalog, feeds_for_points, feeds_for_trip)
 
@@ -91,3 +97,95 @@ def test_dir_with_stops_finds_nested_feed(tmp_path):
 def test_dir_with_stops_none_when_absent(tmp_path):
     (tmp_path / "readme.txt").write_text("x", encoding="utf-8")
     assert _dir_with_stops(str(tmp_path)) is None
+
+
+def _age_file(path, seconds):
+    """Backdate a file's mtime so it reads as `seconds` old."""
+    past = os.path.getmtime(path) - seconds
+    os.utime(path, (past, past))
+
+
+def _gtfs_zip(path, stops_csv):
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr("stops.txt", stops_csv)
+
+
+def test_catalog_skips_download_when_fresh(tmp_path, monkeypatch):
+    path = tmp_path / "cat.csv"
+    path.write_text(CATALOG, encoding="utf-8")            # fresh cached catalog
+    calls = []
+    monkeypatch.setattr(transit_catalog, "_catalog_path", lambda: str(path))
+    monkeypatch.setattr(transit_catalog, "_download",
+                        lambda url, dest: calls.append(url))
+    feeds = transit_catalog.catalog()
+    assert set(feeds) == {"1", "2"} and calls == []       # no network for a fresh copy
+
+
+def test_catalog_refreshes_when_stale(tmp_path, monkeypatch):
+    path = tmp_path / "cat.csv"
+    path.write_text(CATALOG, encoding="utf-8")
+    _age_file(path, timedelta(days=8).total_seconds())    # older than CATALOG_MAX_AGE
+    calls = []
+
+    def fake_dl(url, dest):
+        calls.append(url)
+        with open(dest, "w", encoding="utf-8") as f:
+            f.write(CATALOG)
+
+    monkeypatch.setattr(transit_catalog, "_catalog_path", lambda: str(path))
+    monkeypatch.setattr(transit_catalog, "_download", fake_dl)
+    transit_catalog.catalog()
+    assert calls == [transit_catalog.CATALOG_URL]          # stale: refreshed
+
+
+def test_catalog_offline_fallback_uses_stale_copy(tmp_path, monkeypatch):
+    path = tmp_path / "cat.csv"
+    path.write_text(CATALOG, encoding="utf-8")
+    _age_file(path, timedelta(days=8).total_seconds())
+
+    def boom(url, dest):
+        raise OSError("offline")
+
+    monkeypatch.setattr(transit_catalog, "_catalog_path", lambda: str(path))
+    monkeypatch.setattr(transit_catalog, "_download", boom)
+    with pytest.warns(UserWarning, match="refresh failed"):
+        feeds = transit_catalog.catalog()
+    assert set(feeds) == {"1", "2"}                        # served from the stale cache
+
+
+def test_fetch_feed_reextracts_when_zip_refreshed(tmp_path, monkeypatch):
+    feed = _parse_catalog(CATALOG)["1"]
+    monkeypatch.setattr("travelplanner.roads.cache_dir", lambda: str(tmp_path))
+
+    monkeypatch.setattr(transit_catalog, "_download",
+                        lambda url, dest: _gtfs_zip(dest, "stop_id\nA\n"))
+    d1 = transit_catalog.fetch_feed(feed)
+    assert "A" in open(os.path.join(d1, "stops.txt"), encoding="utf-8").read()
+
+    # Age the cached zip past the TTL and change what a refresh would fetch.
+    zip_path = os.path.join(str(tmp_path), f"feed-{feed.id}.zip")
+    _age_file(zip_path, timedelta(days=8).total_seconds())
+    monkeypatch.setattr(transit_catalog, "_download",
+                        lambda url, dest: _gtfs_zip(dest, "stop_id\nB\n"))
+    d2 = transit_catalog.fetch_feed(feed)
+    text = open(os.path.join(d2, "stops.txt"), encoding="utf-8").read()
+    assert "B" in text and "A" not in text                 # re-extracted the new zip
+
+
+def test_fetch_feed_corrupt_refresh_keeps_working_extract(tmp_path, monkeypatch):
+    feed = _parse_catalog(CATALOG)["1"]
+    monkeypatch.setattr("travelplanner.roads.cache_dir", lambda: str(tmp_path))
+    monkeypatch.setattr(transit_catalog, "_download",
+                        lambda url, dest: _gtfs_zip(dest, "stop_id\nA\n"))
+    d1 = transit_catalog.fetch_feed(feed)
+    assert "A" in open(os.path.join(d1, "stops.txt"), encoding="utf-8").read()
+
+    # A refresh fetches a corrupt (non-zip) file. The extract must not be destroyed.
+    zip_path = os.path.join(str(tmp_path), f"feed-{feed.id}.zip")
+    _age_file(zip_path, timedelta(days=8).total_seconds())
+    monkeypatch.setattr(transit_catalog, "_download",
+                        lambda url, dest: open(dest, "wb").write(b"not a zip"))
+    with pytest.raises(zipfile.BadZipFile):
+        transit_catalog.fetch_feed(feed)
+    assert "A" in open(os.path.join(d1, "stops.txt"), encoding="utf-8").read()
+    assert not os.path.isdir(os.path.join(str(tmp_path), f"feed-{feed.id}.new"))

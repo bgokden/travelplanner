@@ -40,20 +40,32 @@ DEFAULT_CRUISE_KMH = 800.0
 DEFAULT_OVERHEAD = timedelta(minutes=45)
 DEFAULT_DEPART_HOURS = (6, 10, 14, 18)
 
+# The airport/route network changes slowly, so a month-old cache is fine; it is
+# refreshed past this age when online, and kept when a refresh fails offline.
+OPENFLIGHTS_MAX_AGE = timedelta(days=30)
+
 _NULL = {"", "\\N", "\\n"}
 
 
-def _download(url: str) -> str:
-    """Fetch an OpenFlights .dat to the shared cache and return its local path."""
-    from travelplanner.roads import cache_dir
+def _download(url: str, *,
+              max_age: timedelta | None = OPENFLIGHTS_MAX_AGE) -> str:
+    """Fetch an OpenFlights .dat to the shared cache and return its local path.
+
+    Refreshed when older than `max_age`; a refresh that fails offline keeps the
+    cached copy rather than failing.
+    """
+    from travelplanner.roads import cache_dir, refresh_if_stale
 
     dest = os.path.join(cache_dir(), "openflights-" + url.rsplit("/", 1)[-1])
-    if not os.path.exists(dest):
+
+    def fetch():
         tmp = dest + ".part"
         req = urllib.request.Request(url, headers={"User-Agent": "travelplanner"})
         with urllib.request.urlopen(req) as resp, open(tmp, "wb") as out:
             out.write(resp.read())
         os.replace(tmp, dest)
+
+    refresh_if_stale(dest, max_age, fetch, label="OpenFlights data")
     return dest
 
 

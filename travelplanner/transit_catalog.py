@@ -16,15 +16,24 @@ extracts.
 import csv
 import io
 import os
+import shutil
 import urllib.request
 import zipfile
 from dataclasses import dataclass
+from datetime import timedelta
 
 # The Mobility Database catalog export (CSV). Stable share URL maintained by
 # MobilityData; columns are the SpreadsheetSchemaV2 (mdb_source_id, data_type,
 # urls.latest, location.bounding_box.*, status, ...).
 CATALOG_URL = "https://share.mobilitydata.org/catalogs-csv"
 _CATALOG_FILE = "mobility-catalog.csv"
+
+# The catalog changes slowly (feeds added/retired), so a week-old copy is fine;
+# a GTFS feed's schedules change more often, but a week still catches most
+# updates. Both are refreshed when older than this and the network is reachable;
+# offline, the stale copy is kept rather than failing (see roads.refresh_if_stale).
+CATALOG_MAX_AGE = timedelta(days=7)
+FEED_MAX_AGE = timedelta(days=7)
 
 _INACTIVE = {"inactive", "deprecated"}
 
@@ -110,11 +119,23 @@ def _parse_catalog(text: str) -> dict[str, Feed]:
     return out
 
 
-def catalog(*, refresh: bool = False) -> dict[str, Feed]:
-    """All catalog feeds, downloading the CSV if missing or refresh is set."""
+def catalog(*, refresh: bool = False,
+            max_age: timedelta | None = CATALOG_MAX_AGE) -> dict[str, Feed]:
+    """All catalog feeds, downloading the CSV if missing or stale.
+
+    The cached CSV is refreshed when older than `max_age`; `max_age=None` caches
+    forever. On the age-based refresh, a failure that leaves a cached copy is
+    tolerated (the copy is used with a warning) rather than failing. `refresh=True`
+    forces a re-download and propagates any error -- an explicit refresh that
+    cannot reach the network is a failure, not a silent fall back to stale data.
+    """
+    from travelplanner.roads import refresh_if_stale
     path = _catalog_path()
-    if refresh or not os.path.exists(path):
+    if refresh:
         _download(CATALOG_URL, path)
+    else:
+        refresh_if_stale(path, max_age, lambda: _download(CATALOG_URL, path),
+                         label="transit catalog")
     with open(path, encoding="utf-8") as f:
         return _parse_catalog(f.read())
 
@@ -150,13 +171,19 @@ def feeds_for_trip(origin, dest, *, catalog=None) -> list[Feed]:
     return feeds_for_points([origin, dest], catalog=catalog)
 
 
-def download_feed(feed: Feed) -> str:
-    """Download a feed's GTFS zip to the shared cache; return the local path."""
-    from travelplanner.roads import cache_dir
+def download_feed(feed: Feed, *,
+                  max_age: timedelta | None = FEED_MAX_AGE) -> tuple[str, bool]:
+    """Download a feed's GTFS zip to the shared cache; return (path, refreshed).
+
+    `refreshed` is True when the zip was actually (re)downloaded this call, so the
+    caller can re-extract. The zip is refreshed when older than `max_age`; a
+    refresh that fails offline keeps the cached zip rather than failing.
+    """
+    from travelplanner.roads import cache_dir, refresh_if_stale
     dest = os.path.join(cache_dir(), f"feed-{feed.id}.zip")
-    if not os.path.exists(dest):
-        _download(feed.url, dest)
-    return dest
+    refreshed = refresh_if_stale(dest, max_age, lambda: _download(feed.url, dest),
+                                 label=f"feed {feed.id}")
+    return dest, refreshed
 
 
 def _dir_with_stops(root: str) -> str | None:
@@ -168,16 +195,32 @@ def _dir_with_stops(root: str) -> str | None:
     return None
 
 
-def fetch_feed(feed: Feed) -> str:
+def fetch_feed(feed: Feed, *, max_age: timedelta | None = FEED_MAX_AGE) -> str:
     """Download and extract a feed's GTFS zip; return the directory holding
-    stops.txt, ready for load_timetable. Cached after the first fetch."""
+    stops.txt, ready for load_timetable. Cached after the first fetch, and
+    re-extracted when the zip is refreshed (older than `max_age`)."""
     from travelplanner.roads import cache_dir
     out = os.path.join(cache_dir(), f"feed-{feed.id}")
+    zip_path, refreshed = download_feed(feed, max_age=max_age)
     found = _dir_with_stops(out) if os.path.isdir(out) else None
-    if found is None:
-        with zipfile.ZipFile(download_feed(feed)) as z:
-            z.extractall(out)
+    if found is None or refreshed:
+        # Never extracted, or the zip was just refreshed. Extract into a sibling
+        # dir and swap atomically: a corrupt refreshed zip then cannot destroy a
+        # working extract (offline-first at the extract layer too), and a feed that
+        # dropped a file leaves nothing stale behind.
+        tmp = out + ".new"
+        if os.path.isdir(tmp):
+            shutil.rmtree(tmp)
+        try:
+            with zipfile.ZipFile(zip_path) as z:
+                z.extractall(tmp)
+            if _dir_with_stops(tmp) is None:
+                raise ValueError(f"feed {feed.id} archive has no stops.txt")
+        except (OSError, zipfile.BadZipFile, ValueError):
+            shutil.rmtree(tmp, ignore_errors=True)
+            raise                      # leave the old extract intact for the caller
+        if os.path.isdir(out):
+            shutil.rmtree(out)
+        os.replace(tmp, out)
         found = _dir_with_stops(out)
-        if found is None:
-            raise ValueError(f"feed {feed.id} archive has no stops.txt")
     return found

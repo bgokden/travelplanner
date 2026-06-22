@@ -97,7 +97,10 @@ yourself.
 Omit the timetable and `plan_trip` composes one for the trip: the OpenFlights
 flight network (scoped to airports near the endpoints) plus the GTFS feed(s)
 whose coverage area spans the route, selected from the Mobility Database catalog
-and downloaded/cached on first use.
+and downloaded/cached on first use. Stale cache is refreshed the next time it is
+loaded (transit after a week, flights after a month); a refresh that fails offline
+falls back to the cached copy, so a network blip never breaks an otherwise-usable
+cache.
 
 ```python
 from travelplanner import plan_trip

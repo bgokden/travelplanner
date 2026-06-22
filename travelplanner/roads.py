@@ -33,7 +33,9 @@ metric per (day, conditions), so sequential calls are fast.
 """
 
 import os
+import time
 import urllib.request
+import warnings
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from functools import lru_cache
@@ -89,6 +91,39 @@ def cache_dir() -> str:
     path = os.path.join(base, "travelplanner")
     os.makedirs(path, exist_ok=True)
     return path
+
+
+def stale(path: str, max_age: timedelta | None) -> bool:
+    """True if `path` is missing or older than `max_age` (so it should be
+    refreshed). `max_age=None` means never stale -- cache forever once present."""
+    if not os.path.exists(path):
+        return True
+    if max_age is None:
+        return False
+    return time.time() - os.path.getmtime(path) > max_age.total_seconds()
+
+
+def refresh_if_stale(path: str, max_age: timedelta | None, download,
+                     *, label: str) -> bool:
+    """Ensure a cached file is present and fresh, offline-first.
+
+    (Re)download via the zero-arg `download()` when `path` is missing or older than
+    `max_age`. If the refresh fails but a (stale) copy is already cached, keep that
+    copy and warn rather than fail -- a network blip must not break an otherwise
+    usable cache. Raises only when nothing is cached and the download fails.
+    Returns True when a download actually happened (so callers can react, e.g.
+    re-extract an archive)."""
+    if not stale(path, max_age):
+        return False
+    cached = os.path.exists(path)
+    try:
+        download()
+        return True
+    except OSError as exc:
+        if not cached:
+            raise
+        warnings.warn(f"{label}: refresh failed ({exc}); using the cached copy")
+        return False
 
 
 def resolve_region(region: str) -> str:
