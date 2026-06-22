@@ -278,3 +278,19 @@ class Timetable:
             day += timedelta(days=1)
         out.sort(key=lambda c: (c.departure, c.arrival))
         return out
+
+
+def merge_timetables(*timetables: Timetable) -> Timetable:
+    """Combine several timetables into one (e.g. a flight network plus a GTFS
+    feed) for a single scan. Stops and trips are first-wins on id collision and
+    footpaths are concatenated, so pass the more specific feed first. Feed ids are
+    globally unique in practice (GTFS ids, IATA-pair flight ids), so a collision
+    means the same entity and dropping the duplicate is correct."""
+    merged = Timetable()
+    for tt in timetables:
+        for sid, stop in tt.stops.items():
+            merged.stops.setdefault(sid, stop)
+        for tid, trip in tt.trips.items():
+            merged.trips.setdefault(tid, trip)
+        merged.footpaths.extend(tt.footpaths)
+    return merged

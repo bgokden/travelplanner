@@ -306,6 +306,27 @@ def test_foot_ready_arrival_survives_earlier_vehicle_arrival():
     assert j.legs[-1].trip_id == "T3"
 
 
+def test_merge_timetables_unions_and_is_first_wins():
+    from travelplanner.graph.scheduled import merge_timetables
+    a = Timetable()
+    for s in "AB":
+        _stop(a, s)
+    a.add_trip(make_trip("T1", Mode.TRAIN, [("A", "09:00", "09:00"),
+                                            ("B", "09:30", "09:30")]))
+    a.add_footpath("A", "B", timedelta(minutes=2))
+    b = Timetable()
+    for s in "BC":
+        _stop(b, s, transfer_min=9)            # B collides with a's B
+    b.add_trip(make_trip("T2", Mode.FERRY, [("B", "10:00", "10:00"),
+                                            ("C", "10:30", "10:30")]))
+    b.add_footpath("B", "C", timedelta(minutes=3))
+    m = merge_timetables(a, b)
+    assert set(m.stops) == {"A", "B", "C"}
+    assert set(m.trips) == {"T1", "T2"}
+    assert len(m.footpaths) == 2
+    assert m.stops["B"].min_transfer == timedelta(minutes=5)   # first (a) wins
+
+
 def test_earlier_vehicle_arrival_never_breaks_reachability():
     """Monotonicity invariant the by_trip domination bug violated: adding a run
     that reaches an intermediate stop EARLIER by vehicle must never make a

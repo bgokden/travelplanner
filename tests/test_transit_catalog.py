@@ -4,7 +4,7 @@ import csv
 import io
 
 from travelplanner.transit_catalog import (
-    _parse_catalog, feeds_for_points, feeds_for_trip)
+    _dir_with_stops, _parse_catalog, feeds_for_points, feeds_for_trip)
 
 _COLS = [
     "mdb_source_id", "data_type", "provider", "name", "location.country_code",
@@ -70,3 +70,15 @@ def test_trip_needs_a_feed_covering_both_ends():
     assert [f.id for f in feeds_for_trip(AMS, UTRECHT, catalog=feeds)] == ["1"]
     # The metro feed alone does not reach Utrecht.
     assert feeds["2"].covers(*UTRECHT) is False
+
+
+def test_dir_with_stops_finds_nested_feed(tmp_path):
+    sub = tmp_path / "gtfs_inner"
+    sub.mkdir()
+    (sub / "stops.txt").write_text("stop_id\n", encoding="utf-8")
+    assert _dir_with_stops(str(tmp_path)) == str(sub)
+
+
+def test_dir_with_stops_none_when_absent(tmp_path):
+    (tmp_path / "readme.txt").write_text("x", encoding="utf-8")
+    assert _dir_with_stops(str(tmp_path)) is None

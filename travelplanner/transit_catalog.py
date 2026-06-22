@@ -17,6 +17,7 @@ import csv
 import io
 import os
 import urllib.request
+import zipfile
 from dataclasses import dataclass
 
 # The Mobility Database catalog export (CSV). Stable share URL maintained by
@@ -145,3 +146,36 @@ def feeds_for_points(points, *, catalog=None) -> list[Feed]:
 def feeds_for_trip(origin, dest, *, catalog=None) -> list[Feed]:
     """Feeds covering both trip endpoints (a corridor-spanning feed)."""
     return feeds_for_points([origin, dest], catalog=catalog)
+
+
+def download_feed(feed: Feed) -> str:
+    """Download a feed's GTFS zip to the shared cache; return the local path."""
+    from travelplanner.roads import cache_dir
+    dest = os.path.join(cache_dir(), f"feed-{feed.id}.zip")
+    if not os.path.exists(dest):
+        _download(feed.url, dest)
+    return dest
+
+
+def _dir_with_stops(root: str) -> str | None:
+    """The directory under `root` that holds stops.txt (a GTFS zip may nest its
+    files in a subfolder), or None if there is none."""
+    for dirpath, _dirs, files in os.walk(root):
+        if "stops.txt" in files:
+            return dirpath
+    return None
+
+
+def fetch_feed(feed: Feed) -> str:
+    """Download and extract a feed's GTFS zip; return the directory holding
+    stops.txt, ready for load_timetable. Cached after the first fetch."""
+    from travelplanner.roads import cache_dir
+    out = os.path.join(cache_dir(), f"feed-{feed.id}")
+    found = _dir_with_stops(out) if os.path.isdir(out) else None
+    if found is None:
+        with zipfile.ZipFile(download_feed(feed)) as z:
+            z.extractall(out)
+        found = _dir_with_stops(out)
+        if found is None:
+            raise ValueError(f"feed {feed.id} archive has no stops.txt")
+    return found

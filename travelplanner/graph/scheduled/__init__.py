@@ -14,6 +14,7 @@ from travelplanner.graph.scheduled.model import (
     Timetable,
     Trip,
     make_trip,
+    merge_timetables,
     parse_gtfs_time,
 )
 
@@ -28,6 +29,7 @@ __all__ = [
     "Footpath",
     "Connection",
     "make_trip",
+    "merge_timetables",
     "parse_gtfs_time",
     "load_timetable",
 ]
