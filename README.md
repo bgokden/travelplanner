@@ -24,14 +24,22 @@ It is built on established route-planning algorithms:
 
 ## Install
 
+This is not yet published on PyPI (the `travelplanner` name there is an
+unrelated package). Install from a clone of this repository with
+[uv](https://docs.astral.sh/uv/):
+
 ```bash
-pip install travelplanner
+git clone https://github.com/bgokden/travelplanner.git
+cd travelplanner
+uv sync                        # create the env and install all dependencies
+uv run travelplanner demo      # verify the install
+uv run pytest                  # run the test suite
 ```
 
-Everything is included -- there are no optional extras. One install gets the
-scheduled engine, the road engine (CCH over OpenStreetMap), the geometric
-connector, and calendar-aware speed models, so every feature works out of the
-box and nothing has to be enabled separately.
+Requires Python 3.10+. Everything is included -- there are no optional extras.
+One environment gets the scheduled engine, the road engine (CCH over
+OpenStreetMap), the geometric connector, and calendar-aware speed models, so
+every feature works out of the box and nothing has to be enabled separately.
 
 > Note: the road engine pulls `routingkit-cch` and `osmium`, which build from
 > source, so installing needs a C++17 compiler with OpenMP (standard on Linux/CI;
@@ -42,7 +50,7 @@ box and nothing has to be enabled separately.
 Try the bundled sample — no data required:
 
 ```bash
-travelplanner demo
+uv run travelplanner demo
 ```
 
 In code, `plan_trip` is the one-call, door-to-door entry point: give it two
@@ -121,6 +129,9 @@ travelplanner demo                              # bundled sample, all objectives
 travelplanner plan "London" "Paris"             # over the bundled sample timetable
 travelplanner plan "47.0,7.0" "45.0,9.0" --gtfs feed/ --objective cheapest
 ```
+
+From a source checkout (no global install), prefix with `uv run`, e.g.
+`uv run travelplanner demo`.
 
 `plan` takes a `lat,lon` or a bundled city name for origin/destination; with no
 `--gtfs` it uses the bundled sample timetable.

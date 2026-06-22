@@ -117,9 +117,10 @@ island has no road across the sea, so the engine returns an empty list rather
 than a made-up "drive across the water".</div>
 
 <h2>Run it yourself</h2>
-<pre>pip install travelplanner
-travelplanner demo                 # the bundled sample, every objective
-python examples/scenarios.py       # the three examples above</pre>
+<pre>git clone https://github.com/bgokden/travelplanner.git &amp;&amp; cd travelplanner
+uv sync                                  # install (not yet on PyPI)
+uv run travelplanner demo                # the bundled sample, every objective
+uv run python examples/scenarios.py      # the three examples above</pre>
 
 <div class="caveat"><b>About these examples.</b> The timetables here are small
 and illustrative (the engine routes over whatever schedule/road data you give
