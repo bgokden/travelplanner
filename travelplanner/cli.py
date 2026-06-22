@@ -108,6 +108,26 @@ def _cmd_plan(args) -> int:
     return 0
 
 
+def _cmd_transit_prefetch(args) -> int:
+    from travelplanner.auto_timetable import build_default_timetable
+
+    try:
+        origin = _resolve_location(args.origin)
+        dest = _resolve_location(args.destination)
+    except ValueError as exc:
+        print(f"error: {exc}")
+        return 2
+    # Building the auto timetable downloads and caches everything a later offline
+    # 'plan' for this trip needs: the feed catalog, the covering GTFS feed(s), and
+    # the OpenFlights data.
+    tt, notes = build_default_timetable(origin, dest, download=True)
+    print(f"prefetched transit data for {origin.name} -> {dest.name}: "
+          f"{len(tt.stops)} stops, {len(tt.trips)} trips cached")
+    for n in notes:
+        print(f"note: {n}")
+    return 0
+
+
 def _cmd_drive(args) -> int:
     from travelplanner.roads import drive
 
@@ -177,6 +197,12 @@ def main(argv=None) -> int:
     p.add_argument("--objective", choices=[o.value for o in Objective],
                    default="air_priority", help="ranking objective")
 
+    tp = sub.add_parser("transit-prefetch",
+                        help="download a trip's transit data (catalog + GTFS "
+                             "feeds + flights) ahead of an offline 'plan'")
+    tp.add_argument("origin", help='"lat,lon" or a bundled city name')
+    tp.add_argument("destination", help='"lat,lon" or a bundled city name')
+
     dr = sub.add_parser("drive",
                         help="street-accurate driving time + drivability")
     dr.add_argument("origin", help='"lat,lon" or a bundled city name')
@@ -208,6 +234,8 @@ def main(argv=None) -> int:
         return _cmd_demo(args)
     if args.command == "plan":
         return _cmd_plan(args)
+    if args.command == "transit-prefetch":
+        return _cmd_transit_prefetch(args)
     if args.command == "drive":
         return _cmd_drive(args)
     if args.command == "prefetch":

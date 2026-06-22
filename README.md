@@ -148,9 +148,10 @@ results = plan(origin, dest, depart, tt, conn)
 ## CLI
 
 ```bash
-travelplanner demo                              # bundled sample, all objectives
-travelplanner plan "London" "Paris"             # over the bundled sample timetable
-travelplanner plan "47.0,7.0" "45.0,9.0" --gtfs feed/ --objective cheapest
+travelplanner demo                              # bundled offline sample, all objectives
+travelplanner plan "47.0,7.0" "45.0,9.0"        # auto timetable (flights + GTFS by location)
+travelplanner plan "47.0,7.0" "45.0,9.0" --gtfs feed/ --objective cheapest  # your own feed
+travelplanner transit-prefetch "47.0,7.0" "45.0,9.0"  # cache a trip's data for offline use
 ```
 
 From a source checkout (no global install), prefix with `uv run`, e.g.
