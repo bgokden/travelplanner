@@ -372,6 +372,67 @@ def test_plan_trip_transit_access_with_road_raises():
                   access="transit", road=True)
 
 
+def _flight_only_timetable():
+    """A one-flight network (Schiphol -> Zurich) standing in for the OpenFlights
+    data the auto-source path fetches; returned by the load_openflights seam."""
+    from travelplanner.graph.schema import NodeType
+    tt = Timetable()
+    tt.add_stop(Stop("AAA", "Schiphol", 52.31, 4.76, NodeType.AIRPORT,
+                     tz="Europe/Amsterdam"))
+    tt.add_stop(Stop("BBB", "Zurich Airport", 47.46, 8.55, NodeType.AIRPORT,
+                     tz="Europe/Zurich"))
+    tt.add_trip(make_trip("AAA-BBB", Mode.FLIGHT,
+                          [("AAA", "10:00", "10:00"), ("BBB", "11:30", "11:30")]))
+    return tt
+
+
+def test_plan_trip_without_timetable_autocomposes_and_routes(monkeypatch):
+    """The public auto-source path end to end: with NO timetable, plan_trip composes
+    one (flights via the OpenFlights seam, no ground feed) and routes a door-to-door
+    itinerary through it -- car access -> flight -> car egress -- while surfacing the
+    ground-coverage gap as a warning."""
+    from travelplanner import auto_timetable
+
+    flights = _flight_only_timetable()
+    monkeypatch.setattr(auto_timetable, "airports_near",
+                        lambda pts, r, download: {"AAA", "BBB"})
+    monkeypatch.setattr(auto_timetable, "load_openflights",
+                        lambda keep, download: flights)
+    monkeypatch.setattr(auto_timetable, "catalog", lambda: {})   # no ground feed
+
+    origin = place("Amsterdam", LocationType.CITY, 52.37, 4.90)
+    dest = place("Zurich", LocationType.CITY, 47.38, 8.54)
+    depart = datetime(2026, 6, 23, 7, 0)
+
+    with pytest.warns(UserWarning, match="no GTFS feed"):
+        result = plan_trip(origin, dest, depart)                 # timetable omitted
+
+    assert result                                                # composed AND routed
+    assert result[0].primary_mode is Mode.FLIGHT                 # AIR_PRIORITY default
+    assert any(leg.mode is Mode.FLIGHT for it in result for leg in it.legs)
+
+
+def test_plan_trip_without_timetable_no_data_degrades(monkeypatch):
+    """No air and no ground data: the public path does not crash -- it surfaces the
+    coverage gaps as warnings and still returns the direct ground (drive) option."""
+    from travelplanner import auto_timetable
+
+    monkeypatch.setattr(auto_timetable, "airports_near",
+                        lambda pts, r, download: set())          # no airports
+    monkeypatch.setattr(auto_timetable, "catalog", lambda: {})   # no ground feed
+
+    origin = place("Amsterdam", LocationType.CITY, 52.37, 4.90)
+    dest = place("Utrecht", LocationType.CITY, 52.09, 5.12)      # ~37 km, drivable
+    depart = datetime(2026, 6, 23, 7, 0)
+
+    with pytest.warns(UserWarning):                              # gap notes surface
+        result = plan_trip(origin, dest, depart)
+
+    assert result                                                # direct ground option
+    assert all(leg.mode in (Mode.CAR, Mode.WALK)
+               for it in result for leg in it.legs)              # no transit data used
+
+
 def _turn_graph():
     """A real junction at C (>=3 neighbours) with a signal, so turning movements
     carry a junction/signal cost the node-based engine cannot see."""
