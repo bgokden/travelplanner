@@ -223,6 +223,27 @@ faster drive-to-airport flight; the other objectives are unaffected.
 - Runnable example scenarios (full setup visible):
   [`examples/scenarios.py`](examples/scenarios.py) — `uv run python examples/scenarios.py`.
 
+## Data sources and licensing
+
+travelplanner's own code is MIT. The data it auto-fetches is third-party and
+carries its own licenses — credit these when you use or redistribute the data:
+
+- **Flights** — the [OpenFlights](https://openflights.org/data.html) airport and
+  route databases, under the
+  [Open Database License (ODbL)](https://opendatacommons.org/licenses/odbl/1-0/).
+- **Ground transit** — GTFS schedule feeds discovered through the
+  [Mobility Database](https://mobilitydatabase.org/) catalog (catalog metadata
+  under CC0); each feed is under its own license, set by the publishing agency.
+- **Driving** — street routing uses
+  [OpenStreetMap](https://www.openstreetmap.org/copyright) extracts (fetched via
+  [Geofabrik](https://download.geofabrik.de/)) under the ODbL; credit
+  "OpenStreetMap contributors".
+
+No data is bundled in this repository; everything is downloaded and cached at
+runtime. Run `travelplanner attribution` for the notice, or `travelplanner
+attribution ORIGIN DEST` to list the GTFS feeds (and license URLs) covering a
+trip (the planner uses the smallest-area one).
+
 ## License
 
 MIT — see [LICENSE](LICENSE).

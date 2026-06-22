@@ -158,6 +158,11 @@ results = plan_trip("Amsterdam", "Zurich", depart)   # no timetable
 
 From the CLI it is the default, too: `travelplanner plan "52.37,4.90" "47.38,8.54"`.
 
+The auto-sourced data is third-party: OpenFlights flights under the ODbL, and
+GTFS feeds (via the Mobility Database catalog) each under their own license.
+`travelplanner attribution ORIGIN DEST` prints the credit and the feeds covering
+a trip; see the README's "Data sources and licensing" for the full notice.
+
 ## Run it yourself
 
 ```bash

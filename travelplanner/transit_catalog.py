@@ -40,6 +40,7 @@ class Feed:
     min_lon: float
     max_lat: float
     max_lon: float
+    license_url: str = ""
 
     def covers(self, lat: float, lon: float) -> bool:
         return (self.min_lat <= lat <= self.max_lat
@@ -104,7 +105,8 @@ def _parse_catalog(text: str) -> dict[str, Feed]:
             provider=(r.get("provider") or "").strip(),
             country=(r.get("location.country_code") or "").strip(),
             url=url, min_lat=min_lat, min_lon=min_lon,
-            max_lat=max_lat, max_lon=max_lon)
+            max_lat=max_lat, max_lon=max_lon,
+            license_url=(r.get("urls.license") or "").strip())
     return out
 
 

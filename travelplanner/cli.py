@@ -2,6 +2,7 @@
 
   travelplanner demo                          run the bundled multimodal sample
   travelplanner plan ORIGIN DEST [--gtfs DIR] plan a door-to-door trip
+  travelplanner attribution [ORIGIN DEST]     show data sources and licenses
 
 ORIGIN/DEST are either "lat,lon" or a bundled city name. With no --gtfs, a
 timetable is auto-composed for the trip (flights + GTFS feeds by location,
@@ -100,11 +101,71 @@ def _cmd_plan(args) -> int:
         print()
     if not results:
         print("no itinerary found")
-        return 0
-    for rank, it in enumerate(results, 1):
-        print(f"#{rank}")
-        _print_itinerary(it)
-        print()
+    else:
+        for rank, it in enumerate(results, 1):
+            print(f"#{rank}")
+            _print_itinerary(it)
+            print()
+    if tt is None and results:
+        # Auto-sourced: credit only the datasets these results actually used,
+        # derived from the leg modes (a flight-only result must not credit GTFS).
+        # CLI access/egress is straight-line, not OSM, so road=False here.
+        from travelplanner.attribution import data_sources
+        from travelplanner.models import Mode
+        modes = {leg.mode for it in results for leg in it.legs}
+        ground = bool({Mode.TRAIN, Mode.FERRY} & modes)
+        sources = data_sources(air=Mode.FLIGHT in modes, ground=ground, road=False)
+        if sources:
+            print("credits (data used in these results):")
+            for a in sources:
+                print(f"  {a.line()}")
+            if ground:
+                print('  per-feed details: travelplanner attribution '
+                      f'"{args.origin}" "{args.destination}"')
+    return 0
+
+
+def _cmd_attribution(args) -> int:
+    from travelplanner.attribution import data_sources, render
+
+    feeds = []
+    if args.origin and args.destination:
+        from travelplanner.transit_catalog import (
+            cached_catalog, catalog, feeds_for_trip)
+        try:
+            origin = _resolve_location(args.origin)
+            dest = _resolve_location(args.destination)
+        except ValueError as exc:
+            print(f"error: {exc}")
+            return 2
+        cat = cached_catalog()
+        if not cat:
+            try:
+                print("note: downloading the feed catalog (first use)\n")
+                cat = catalog()
+            except OSError as exc:
+                print(f"note: catalog unavailable ({exc}); "
+                      "showing the general data sources only\n")
+                cat = {}
+        if cat:
+            covering = feeds_for_trip((origin.lat, origin.lon),
+                                      (dest.lat, dest.lon), catalog=cat)
+            if not covering:
+                print("note: no catalog feed covers this trip\n")
+            else:
+                # The planner downloads only the smallest-area covering feed, so
+                # only that one is credited; the rest are unused alternatives.
+                feeds = covering[:1]
+                if len(covering) > 1:
+                    alts = ", ".join(f.provider or f.name or f.id
+                                     for f in covering[1:])
+                    print("note: other feeds cover this trip but are not used: "
+                          f"{alts}\n")
+    elif args.origin or args.destination:
+        print("note: give both origin and destination for per-feed licenses\n")
+    print("Data sources travelplanner auto-fetches (credit them when you use or "
+          "redistribute the data):\n")
+    print(render(data_sources(feeds=feeds)))
     return 0
 
 
@@ -140,9 +201,11 @@ def _cmd_drive(args) -> int:
     if not result.drivable:
         print(f"{args.origin} -> {args.destination}: NOT drivable "
               f"(no road route in region {args.region!r})")
-        return 0
-    print(f"{args.origin} -> {args.destination} [{args.region}]: drivable, "
-          f"{result.duration} ({result.distance_km} km)")
+    else:
+        print(f"{args.origin} -> {args.destination} [{args.region}]: drivable, "
+              f"{result.duration} ({result.distance_km} km)")
+    print("data: OpenStreetMap contributors via Geofabrik, under ODbL "
+          "(https://www.openstreetmap.org/copyright)")
     return 0
 
 
@@ -203,6 +266,14 @@ def main(argv=None) -> int:
     tp.add_argument("origin", help='"lat,lon" or a bundled city name')
     tp.add_argument("destination", help='"lat,lon" or a bundled city name')
 
+    ab = sub.add_parser("attribution",
+                        help="show the data sources and licenses for "
+                             "auto-sourced trips (OpenFlights, GTFS feeds)")
+    ab.add_argument("origin", nargs="?",
+                    help='optional "lat,lon" or city, to list per-feed licenses')
+    ab.add_argument("destination", nargs="?",
+                    help='optional "lat,lon" or city, to list per-feed licenses')
+
     dr = sub.add_parser("drive",
                         help="street-accurate driving time + drivability")
     dr.add_argument("origin", help='"lat,lon" or a bundled city name')
@@ -236,6 +307,8 @@ def main(argv=None) -> int:
         return _cmd_plan(args)
     if args.command == "transit-prefetch":
         return _cmd_transit_prefetch(args)
+    if args.command == "attribution":
+        return _cmd_attribution(args)
     if args.command == "drive":
         return _cmd_drive(args)
     if args.command == "prefetch":

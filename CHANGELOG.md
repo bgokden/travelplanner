@@ -16,6 +16,16 @@ All notable changes to this project are documented here. The format is based on
   `merge_timetables`, `clip_timetable`). Coverage gaps surface as warnings; GTFS
   coverage is uneven by region and flight times are synthetic, so supply a feed
   for exact data.
+- Data attribution for the fetched datasets (`attribution` module and the
+  `travelplanner attribution [ORIGIN DEST]` command): a single source of truth for
+  crediting OpenFlights (ODbL), the Mobility Database GTFS feeds (each under its
+  own license), and OpenStreetMap road extracts via Geofabrik (ODbL). The catalog
+  now records each feed's license URL (`Feed.license_url`), so `attribution ORIGIN
+  DEST` credits the one feed the planner actually fetches (smallest covering box)
+  and lists the rest as unused. Credit is use-accurate: the auto `plan` footer
+  credits only the datasets its result legs drew on, and `drive` credits
+  OpenStreetMap. README and `docs/how-it-works.md` gain a "Data sources and
+  licensing" section.
 - Timezone-aware connections: stops carry an IANA timezone (`Stop.tz`, read from
   GTFS `agency.txt`/`stop_timezone` and the OpenFlights tz column, validated at
   load). A feed with timezone data materializes connections in absolute UTC via
