@@ -13,7 +13,7 @@ import csv
 import io
 import os
 from collections import Counter
-from datetime import date
+from datetime import date, timedelta
 
 from travelplanner.models import CostLevel, Mode
 from travelplanner.graph.schema import NodeType
@@ -228,4 +228,58 @@ def load_timetable(feed_dir: str) -> Timetable:
         except ValueError:
             continue   # skip a trip with non-monotonic stop_times (invalid data)
 
+    _apply_frequencies(tt, feed_dir)
     return tt
+
+
+# A single frequencies window expanding to more runs than this is implausible
+# (sub-30-second all-day headway) and almost certainly bad data, so it is skipped
+# rather than allowed to explode memory.
+_MAX_FREQ_RUNS = 2000
+
+
+def _apply_frequencies(tt: Timetable, feed_dir: str) -> None:
+    """Expand frequency-based trips (frequencies.txt) into concrete runs.
+
+    A frequencies row means the trip repeats every headway_secs from start_time to
+    end_time; each run shifts the trip's stop-time pattern so its first stop
+    departs at that slot. The template trip is itself not a real run, so it is
+    replaced by its expansion. Feeds without frequencies.txt are unaffected.
+    """
+    path = os.path.join(feed_dir, "frequencies.txt")
+    if not os.path.exists(path):
+        return
+    windows: dict[str, list[tuple]] = {}
+    for r in _rows(path):
+        tid = r.get("trip_id")
+        headway = _to_int(r.get("headway_secs"))
+        if not tid or tid not in tt.trips or not headway or headway <= 0:
+            continue
+        try:
+            start = parse_gtfs_time((r.get("start_time") or "").strip())
+            end = parse_gtfs_time((r.get("end_time") or "").strip())
+        except ValueError:
+            continue
+        if end <= start or (end - start) // timedelta(seconds=headway) > _MAX_FREQ_RUNS:
+            continue
+        windows.setdefault(tid, []).append(
+            (start, end, timedelta(seconds=headway)))
+
+    for tid, rows in windows.items():
+        template = tt.trips.pop(tid)
+        anchor = template.stop_times[0].departure
+        for start, end, headway in rows:
+            t = start
+            while t < end:
+                shift = t - anchor
+                sts = tuple(StopTime(st.stop_id, st.arrival + shift,
+                                     st.departure + shift)
+                            for st in template.stop_times)
+                run_id = f"{tid}#{int(t.total_seconds())}"
+                try:
+                    tt.trips[run_id] = Trip(
+                        id=run_id, mode=template.mode, stop_times=sts,
+                        validity=template.validity, cost_level=template.cost_level)
+                except ValueError:
+                    pass        # shifted pattern stays monotonic; defensive only
+                t += headway

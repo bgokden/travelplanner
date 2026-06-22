@@ -1,7 +1,7 @@
 """GTFS loader tests on a synthetic feed written to a temp directory."""
 
 import csv
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from travelplanner.models import Mode
 from travelplanner.graph.scheduled import ConnectionScan, load_timetable
@@ -64,6 +64,24 @@ def test_loads_stops_trips_and_modes(tmp_path):
     assert set(tt.stops) == {"A", "B", "C", "X", "Y"}
     assert tt.trips["TR1"].mode is Mode.TRAIN
     assert tt.trips["FR1"].mode is Mode.FERRY
+
+
+def test_frequencies_expand_template_into_runs(tmp_path):
+    _build_feed(tmp_path)
+    # TR1's pattern anchors at 09:00; run it every 30 min from 06:00 to 08:00.
+    _write(tmp_path / "frequencies.txt", [
+        {"trip_id": "TR1", "start_time": "06:00:00", "end_time": "08:00:00",
+         "headway_secs": "1800"},
+    ])
+    tt = load_timetable(str(tmp_path))
+    assert "TR1" not in tt.trips                       # template replaced by runs
+    runs = [tid for tid in tt.trips if tid.startswith("TR1#")]
+    assert len(runs) == 4                              # 06:00, 06:30, 07:00, 07:30
+    first = tt.trips["TR1#21600"]                      # 21600s = 06:00
+    assert first.stop_times[0].stop_id == "A"
+    assert first.stop_times[0].departure == timedelta(hours=6)   # shifted to slot
+    # spacing preserved from the pattern (A 09:00 -> C 10:00 == +1h)
+    assert first.stop_times[-1].arrival == timedelta(hours=7)
 
 
 def test_stop_timezone_from_agency_with_per_stop_override(tmp_path):
