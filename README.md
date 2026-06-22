@@ -91,6 +91,28 @@ plan_trip(origin, dest, depart, tt, access="transit")
 lower-level call when you want to build and pass a specific `RoadConnector`
 yourself.
 
+## No data needed: auto-sourced timetables
+
+Omit the timetable and `plan_trip` composes one for the trip: the OpenFlights
+flight network (scoped to airports near the endpoints) plus the GTFS feed(s)
+whose coverage area spans the route, selected from the Mobility Database catalog
+and downloaded/cached on first use.
+
+```python
+from travelplanner import plan_trip
+
+results = plan_trip("Amsterdam", "Zurich", depart)   # no timetable: auto-composed
+```
+
+From the CLI, the same is the default — `travelplanner plan "52.37,4.90"
+"47.38,8.54"` returns a car -> Schiphol -> flight -> Zürich Airport -> car trip
+with nothing to set up.
+
+Caveats worth knowing: GTFS coverage is uneven by region (strong in Europe and
+North America), gaps are reported as warnings, and the flight schedule is
+synthetic (real airports and routes, but representative times, not live airline
+schedules). For exact, reproducible data, supply a feed instead.
+
 ## Using your own data
 
 Supply a GTFS feed as the `Timetable` and let `plan_trip` do the rest:
@@ -104,8 +126,8 @@ results = plan_trip("Amsterdam", "Vaduz", depart, tt)            # straight-line
 results = plan_trip("Amsterdam", "Vaduz", depart, tt, road=True) # real road access
 ```
 
-Transit feeds are not auto-discovered (unlike road extracts): you supply the
-feed, and transit quality is feed quality. With `road=True` the road extract is
+When you supply a feed, transit quality is feed quality (no auto-sourcing or
+corridor clipping is applied -- you get exactly that feed). With `road=True` the road extract is
 auto-selected from the coordinates and cached; a cross-region trip resolves a
 separate extract per endpoint (a `SplitConnector`), and a trip no single extract
 covers falls back to straight-line access rather than loading a continent.
@@ -182,7 +204,9 @@ faster drive-to-airport flight; the other objectives are unaffected.
 
 - Times are treated as **naive local times** — multi-timezone international
   flights are not yet handled correctly.
-- No bundled live flight schedules; supply your own GTFS/timetable data.
+- Flight schedules are synthetic (real airports and routes from OpenFlights, but
+  representative times, not live airline schedules); auto-sourced GTFS coverage
+  is uneven by region. Supply your own feed for exact data.
 - Country-scale road graphs are memory-heavy (node bookkeeping); fine for a
   region, large for a continent.
 
