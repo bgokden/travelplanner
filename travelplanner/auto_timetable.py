@@ -14,7 +14,8 @@ the caller can surface it rather than return a silent empty result.
 import zipfile
 from functools import lru_cache
 
-from travelplanner.openflights import airports_near, load_openflights
+from travelplanner.openflights import (
+    airports_near, hub_airports, load_openflights)
 from travelplanner.transit_catalog import (
     Feed, catalog, cached_catalog, feeds_for_trip, fetch_feed)
 from travelplanner.graph.scheduled import (
@@ -37,6 +38,12 @@ _CORRIDOR_MARGIN_DEG = 0.6
 # the synthetic flight network to them keeps the scan fast (the full global
 # network is ~44k synthetic flights).
 _AIRPORT_RADIUS_KM = 250.0
+
+# Hub airports (at least this many routes) within this distance of an endpoint are
+# added as connection points, so a trip with no direct flight can route origin ->
+# hub -> destination. Bounded to major hubs near the trip to keep the scan fast.
+_HUB_RADIUS_KM = 3000.0
+_HUB_MIN_ROUTES = 80
 
 
 def _corridor_bbox(points, margin: float):
@@ -63,8 +70,13 @@ def build_default_timetable(origin, dest, *, download: bool = True,
 
     if air:
         try:
-            keep = airports_near([o, d], _AIRPORT_RADIUS_KM, download=download)
-            if len(keep) >= 2:
+            near = airports_near([o, d], _AIRPORT_RADIUS_KM, download=download)
+            if len(near) >= 2:
+                # Add well-connected hub airports as connection points so a trip
+                # with no direct flight can still route origin -> hub -> dest.
+                keep = near | hub_airports([o, d], _HUB_RADIUS_KM,
+                                           min_routes=_HUB_MIN_ROUTES,
+                                           download=download)
                 parts.append(load_openflights(keep=keep, download=download))
             else:
                 notes.append("no airports near the trip; air skipped")

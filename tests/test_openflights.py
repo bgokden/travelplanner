@@ -3,8 +3,9 @@
 from datetime import datetime, timedelta
 
 from travelplanner.models import Mode, CostLevel
-from travelplanner.openflights import (load_airports, load_flight_network,
-                                       load_openflights, search_airports)
+from travelplanner.openflights import (hub_airports, load_airports,
+                                       load_flight_network, load_openflights,
+                                       search_airports)
 from travelplanner.graph.schema import NodeType
 from travelplanner.graph.scheduled import ConnectionScan
 
@@ -160,3 +161,46 @@ def test_load_flight_network_filters_by_degree(tmp_path):
     tt = load_flight_network(airports=a, routes=r, min_routes=1, depart_hours=(8,))
     assert "AMS" in tt.stops and "ZRH" in tt.stops
     assert tt.trips and all(t.mode is Mode.FLIGHT for t in tt.trips.values())
+
+
+# Three airports: HUB (degree 3) and FAR (degree 2) are hubs; LOW (degree 1) is
+# not. HUB and LOW are co-located; FAR is on the far side of the world.
+HUB_AIRPORTS = '''\
+1,"Hub","HubCity","X","HUB","HUBB",50.0,8.0,0,0,"U","\\N","airport","src"
+2,"Low","LowCity","X","LOW","LOWW",50.1,8.1,0,0,"U","\\N","airport","src"
+3,"Far","FarCity","X","FAR","FARR",10.0,100.0,0,0,"U","\\N","airport","src"
+'''
+HUB_ROUTES = '''\
+ZZ,1,HUB,1,LOW,2,,0,738
+ZZ,1,HUB,1,FAR,3,,0,738
+ZZ,1,FAR,3,HUB,1,,0,738
+'''
+
+
+def _hub_feed(tmp_path):
+    a = tmp_path / "airports.dat"
+    a.write_text(HUB_AIRPORTS, encoding="utf-8")
+    r = tmp_path / "routes.dat"
+    r.write_text(HUB_ROUTES, encoding="utf-8")
+    return str(a), str(r)
+
+
+def test_hub_airports_filters_by_degree_and_radius(tmp_path):
+    a, r = _hub_feed(tmp_path)
+    # Near HUB, a tight radius: HUB qualifies (degree 3); LOW is near but below the
+    # degree threshold; FAR is a hub but out of range.
+    near = hub_airports([(50.0, 8.0)], 100.0, min_routes=2, airports=a, routes=r)
+    assert near == {"HUB"}
+    # A global radius brings FAR in too, but LOW (degree 1) still does not qualify.
+    wide = hub_airports([(50.0, 8.0)], 30000.0, min_routes=2, airports=a, routes=r)
+    assert wide == {"HUB", "FAR"}
+    # The count cap keeps only the busiest hubs: limit=1 drops FAR (degree 2 < 3).
+    top = hub_airports([(50.0, 8.0)], 30000.0, min_routes=2, limit=1,
+                       airports=a, routes=r)
+    assert top == {"HUB"}
+
+
+def test_hub_airports_empty_without_cached_data(tmp_path, monkeypatch):
+    import travelplanner.roads as roads
+    monkeypatch.setattr(roads, "cache_dir", lambda: str(tmp_path))   # no routes.dat
+    assert hub_airports([(50.0, 8.0)], 100.0, download=False) == set()

@@ -186,6 +186,43 @@ def airports_near(points, radius_km: float, *, download: bool = False) -> set[st
     return keep
 
 
+def hub_airports(points, radius_km: float, *, min_routes: int = 80,
+                 limit: int = 6, download: bool = False,
+                 airports=None, routes=None) -> set[str]:
+    """IATA codes of the busiest hub airports near the trip.
+
+    A hub is an airport with at least `min_routes` non-stop routes (its degree in
+    the OpenFlights network); this returns the `limit` highest-degree hubs within
+    `radius_km` of EACH point in `points`, unioned. Added to a trip's flight network
+    alongside `airports_near`, these give the scan connection points -- so an
+    itinerary can route origin -> hub -> destination when no direct flight exists.
+    The per-point cap keeps the network bounded (hubs interconnect densely, so an
+    unbounded set explodes the synthetic-flight count) AND guarantees each endpoint
+    gets connection points -- a global cap could otherwise fill entirely with one
+    region's mega-hubs and strand the other end. With no explicit `airports`/
+    `routes` paths the cached OpenFlights data is used (fetched when
+    `download=True`); empty if the data is unavailable.
+    """
+    if routes is None:
+        from travelplanner.roads import cache_dir
+        routes = os.path.join(cache_dir(), "openflights-routes.dat")
+        if not os.path.exists(routes):
+            if not download:
+                return set()
+            routes = _download(ROUTES_URL)
+    degree = _route_degree(routes)
+    rows = (load_airports(airports, download=download) if airports is not None
+            else load_airports(download=download))    # share airports_near's cache
+    keep: set[str] = set()
+    for lat, lon in points:
+        near = [(degree.get(r["iata"], 0), r["iata"]) for r in rows
+                if degree.get(r["iata"], 0) >= min_routes
+                and haversine(r["lat"], r["lon"], lat, lon) <= radius_km]
+        near.sort(reverse=True)              # busiest hubs first, then by code
+        keep.update(iata for _, iata in near[:limit])
+    return keep
+
+
 def search_airports(query: str, *, limit: int = 8, airports=None) -> list[dict]:
     """Airports matching `query`: exact IATA first, then name/city prefix, then any.
 

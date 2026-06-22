@@ -179,6 +179,12 @@ All notable changes to this project are documented here. The format is based on
   vehicles at that stop while still allowing boarding); inter-stop rows become
   footpaths (the stated minimum time, or the walking time between the stops when
   none is given; type 3 adds none). `Timetable.transfer_time` may now return None.
+- Connecting flights in the auto-sourced network. The flight network now adds the
+  busiest hub airports near the trip (`openflights.hub_airports`) as connection
+  points, so a trip with no direct flight routes origin -> hub -> destination (e.g.
+  Austin -> Atlanta -> Zurich). The hub set is capped to the few busiest hubs in
+  range, so the synthetic-flight count and scan time stay bounded (measured ~1.2k
+  flights / ~10 ms for a transatlantic trip).
 
 ### Changed
 - No more optional extras: the road engine (`routingkit-cch`, `osmium`) and the

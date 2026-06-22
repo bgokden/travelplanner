@@ -396,6 +396,8 @@ def test_plan_trip_without_timetable_autocomposes_and_routes(monkeypatch):
     flights = _flight_only_timetable()
     monkeypatch.setattr(auto_timetable, "airports_near",
                         lambda pts, r, download: {"AAA", "BBB"})
+    monkeypatch.setattr(auto_timetable, "hub_airports",
+                        lambda pts, r, min_routes, download: set())
     monkeypatch.setattr(auto_timetable, "load_openflights",
                         lambda keep, download: flights)
     monkeypatch.setattr(auto_timetable, "catalog", lambda: {})   # no ground feed
