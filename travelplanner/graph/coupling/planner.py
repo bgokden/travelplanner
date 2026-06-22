@@ -19,6 +19,7 @@ multi-label search.
 """
 
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from travelplanner.geo import haversine
 from travelplanner.models import Itinerary, Leg, Location, LocationType, Mode
@@ -262,11 +263,28 @@ def _transit_candidate(csa: ConnectionScan, origin: Location, dest: Location,
     return None
 
 
+def _normalize_depart(origin: Location, depart_at: datetime,
+                      timetable: Timetable) -> datetime:
+    """Read a naive departure as local at the origin for a tz-aware feed.
+
+    The output itinerary's only stored absolute time is depart_at (legs carry
+    durations), so making it aware in the origin's zone keeps a single-timezone
+    trip's displayed clock identical to before while letting the scan reconcile
+    it against UTC-materialized connections. A naive depart_at over a feed with no
+    timezone data, or an already-aware depart_at, is left untouched.
+    """
+    if depart_at.tzinfo is not None:
+        return depart_at
+    name = timetable.zone_for_point(origin.lat, origin.lon)
+    return depart_at.replace(tzinfo=ZoneInfo(name)) if name else depart_at
+
+
 def _candidates(origin: Location, dest: Location, depart_at: datetime,
                 timetable: Timetable, connector: RoadConnector,
                 conditions: frozenset[str], horizon: timedelta) -> list[Itinerary]:
     """All door-to-door candidates a single connector yields (pre-Pareto): the
     pure-ground option plus one transit option per line-haul mode restriction."""
+    depart_at = _normalize_depart(origin, depart_at, timetable)
     day = depart_at.date()
     candidates: list[Itinerary] = []
 

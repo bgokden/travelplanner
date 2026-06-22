@@ -9,8 +9,11 @@ Times are treated as naive local times. Multi-timezone flight handling is a
 known limitation to be addressed when international air schedules are added.
 """
 
+from collections import Counter
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from functools import lru_cache
+from zoneinfo import ZoneInfo
 
 from travelplanner.models import CostLevel, Mode
 from travelplanner.graph.schema import NodeType
@@ -20,6 +23,13 @@ from travelplanner.graph.validity import ALWAYS, Validity
 # and as the fallback for a stop a trip passes through but that was never
 # registered (so an unregistered interior stop never gets a 0-second transfer).
 DEFAULT_MIN_TRANSFER = timedelta(minutes=5)
+
+_UTC = timezone.utc
+
+
+@lru_cache(maxsize=512)
+def _zone(name: str) -> ZoneInfo:
+    return ZoneInfo(name)
 
 
 def parse_gtfs_time(value: str) -> timedelta:
@@ -147,6 +157,63 @@ class Timetable:
         stop = self.stops.get(stop_id)
         return stop.min_transfer if stop else DEFAULT_MIN_TRANSFER
 
+    def tz_aware(self) -> bool:
+        """True once any stop carries an IANA timezone. A feed with no timezone
+        data stays naive (we never invent a zone we do not have); only a tz-aware
+        feed materializes connections in absolute UTC time."""
+        return any(s.tz for s in self.stops.values())
+
+    def _default_tz(self) -> str | None:
+        """The most common stop timezone, used for a tz-aware feed's stops that
+        lack their own tz (so an aware feed never mixes naive and aware times)."""
+        names = Counter(s.tz for s in self.stops.values() if s.tz)
+        return names.most_common(1)[0][0] if names else None
+
+    def localize(self, stop_id: str, when: datetime) -> datetime:
+        """Normalize a source time for the scan.
+
+        A naive time is read as local at `stop_id` (the "local to the start" rule)
+        and converted to absolute UTC; an already-aware time is converted to UTC
+        as-is. For a feed with no timezone data the time passes through unchanged,
+        so the scan stays naive.
+        """
+        if not self.tz_aware():
+            return when
+        if when.tzinfo is not None:
+            return when.astimezone(_UTC)
+        stop = self.stops.get(stop_id)
+        name = stop.tz if stop and stop.tz else self._default_tz()
+        zone = _zone(name) if name else _UTC
+        return when.replace(tzinfo=zone).astimezone(_UTC)
+
+    def zone_for_point(self, lat: float, lon: float) -> str | None:
+        """IANA timezone of the stop nearest (lat, lon), the feed default if that
+        stop has none, or None for a feed with no timezone data. Used to read a
+        naive departure time as local at the trip's origin (a door coordinate has
+        no stop of its own)."""
+        if not self.tz_aware():
+            return None
+        from travelplanner.geo import haversine
+        nearest = min(self.stops.values(), default=None,
+                      key=lambda s: haversine(lat, lon, s.lat, s.lon))
+        if nearest is None:
+            return None
+        return nearest.tz or self._default_tz()
+
+    def _materialize(self, day_midnight: datetime, stop_id: str,
+                     offset: timedelta, default_tz: str | None) -> datetime:
+        """Absolute UTC datetime for a stop-time offset on a service day.
+
+        The offset is wall-clock from the stop's local service-day midnight (GTFS
+        hours may exceed 24 for overnight runs), so localize in the stop's zone
+        and convert to UTC -- zoneinfo applies the correct DST offset at that wall
+        time. With no zone available it falls back to UTC.
+        """
+        stop = self.stops.get(stop_id)
+        name = (stop.tz if stop and stop.tz else default_tz)
+        zone = _zone(name) if name else _UTC
+        return (day_midnight.replace(tzinfo=zone) + offset).astimezone(_UTC)
+
     def connections(self, start: datetime, end: datetime,
                     conditions: frozenset[str] = frozenset()) -> list[Connection]:
         """Materialize connections for a [start, end] BOARDING window, sorted by
@@ -155,12 +222,22 @@ class Timetable:
         after `end` are kept so the scan can ride through). The service-date
         look-back covers the largest stop-time offset, so multi-night runs whose
         service date is several days earlier are still captured.
+
+        Times are naive local for a feed with no timezone data; for a tz-aware
+        feed every Connection time is absolute UTC (each stop localized in its own
+        zone). `start`/`end` must match that convention -- aware UTC for a tz-aware
+        feed -- which the scan guarantees by deriving them from its sources.
         """
         out: list[Connection] = []
+        aware = self.tz_aware()
+        default_tz = self._default_tz() if aware else None
         max_offset = max((st.departure for trip in self.trips.values()
                           for st in trip.stop_times), default=timedelta())
         day = (start - max(timedelta(days=1), max_offset)).date()
-        last = end.date()
+        # A local service date materializes to UTC up to a full day off (max tz
+        # offset < 24h), so an aware feed scans one extra day forward; the
+        # dep<=end / boardable filters drop anything genuinely out of window.
+        last = (end + timedelta(days=1)).date() if aware else end.date()
         while day <= last:
             midnight = datetime(day.year, day.month, day.day)
             iso = day.isoformat()
@@ -172,8 +249,14 @@ class Timetable:
                 segs: list[Connection] = []
                 boardable = False
                 for a, b in zip(sts, sts[1:]):
-                    dep = midnight + a.departure
-                    arr = midnight + b.arrival
+                    if aware:
+                        dep = self._materialize(midnight, a.stop_id,
+                                                a.departure, default_tz)
+                        arr = self._materialize(midnight, b.stop_id,
+                                                b.arrival, default_tz)
+                    else:
+                        dep = midnight + a.departure
+                        arr = midnight + b.arrival
                     if dep < start:
                         continue       # cannot board (nor ride-through) before t0
                     # A vehicle segment between two distinct stops must advance

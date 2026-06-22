@@ -129,6 +129,11 @@ class ConnectionScan:
         # arrival, needing the change time, would miss.
         if not sources:
             return {}, {}, {}, {}, {}
+        # Normalize source times to the timetable's frame: a naive time is read as
+        # local at its own stop and converted to UTC (a tz-aware feed), or left
+        # naive (a feed with no timezone data). After this every datetime in the
+        # scan shares one frame, so all comparisons are well-defined.
+        sources = {s: self.tt.localize(s, t) for s, t in sources.items()}
         t0 = min(sources.values())
         # Horizon is measured from each source's ready time, so the window end
         # tracks the latest source, not the earliest.
