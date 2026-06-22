@@ -66,6 +66,36 @@ def test_loads_stops_trips_and_modes(tmp_path):
     assert tt.trips["FR1"].mode is Mode.FERRY
 
 
+def test_stop_timezone_from_agency_with_per_stop_override(tmp_path):
+    _build_feed(tmp_path)
+    _write(tmp_path / "agency.txt", [
+        {"agency_id": "A1", "agency_name": "Rail", "agency_url": "http://x",
+         "agency_timezone": "Europe/Zurich"},
+    ])
+    # Re-write stops with a stop_timezone column: A overrides, the rest inherit.
+    _write(tmp_path / "stops.txt", [
+        {"stop_id": "A", "stop_name": "Aville", "stop_lat": "46.9",
+         "stop_lon": "7.4", "stop_timezone": "Europe/Paris"},
+        {"stop_id": "B", "stop_name": "Bborg", "stop_lat": "46.7",
+         "stop_lon": "7.6", "stop_timezone": ""},
+        {"stop_id": "C", "stop_name": "Ctown", "stop_lat": "46.3",
+         "stop_lon": "8.0", "stop_timezone": ""},
+        {"stop_id": "X", "stop_name": "Xport", "stop_lat": "46.4",
+         "stop_lon": "6.8", "stop_timezone": ""},
+        {"stop_id": "Y", "stop_name": "Yisle", "stop_lat": "46.5",
+         "stop_lon": "6.9", "stop_timezone": ""},
+    ])
+    tt = load_timetable(str(tmp_path))
+    assert tt.stops["A"].tz == "Europe/Paris"      # per-stop override wins
+    assert tt.stops["B"].tz == "Europe/Zurich"     # inherits agency default
+
+
+def test_no_agency_file_means_unknown_timezone(tmp_path):
+    _build_feed(tmp_path)                           # base feed has no agency.txt
+    tt = load_timetable(str(tmp_path))
+    assert all(s.tz is None for s in tt.stops.values())
+
+
 def test_weekday_service_active_and_inactive(tmp_path):
     _build_feed(tmp_path)
     csa = ConnectionScan(load_timetable(str(tmp_path)))

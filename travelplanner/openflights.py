@@ -70,8 +70,13 @@ def _airports(path: str, keep) -> dict[str, Stop]:
                 lat, lon = float(row[6]), float(row[7])
             except ValueError:
                 continue
+            # Column 11 is the IANA tz database name (e.g. "Europe/Amsterdam");
+            # it is what makes synthetic departure hours mean local airport time
+            # once flights are materialized in absolute (UTC) time.
+            tz = row[11].strip() if len(row) > 11 else ""
             out[iata] = Stop(id=iata, name=row[1].strip() or iata,
-                             lat=lat, lon=lon, type=NodeType.AIRPORT)
+                             lat=lat, lon=lon, type=NodeType.AIRPORT,
+                             tz=tz or None)
     return out
 
 

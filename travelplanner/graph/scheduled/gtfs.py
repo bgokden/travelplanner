@@ -12,6 +12,7 @@ service mapped to TRAIN, which is noted rather than silently dropped.
 import csv
 import io
 import os
+from collections import Counter
 from datetime import date
 
 from travelplanner.models import CostLevel, Mode
@@ -132,19 +133,43 @@ def _load_services(feed_dir: str) -> tuple[dict[str, Validity], bool]:
     return services, has_calendar
 
 
+def _feed_timezone(feed_dir: str) -> str | None:
+    """The feed's default IANA timezone from agency.txt.
+
+    GTFS requires agency_timezone, and all stops without a stop_timezone inherit
+    their agency's zone. A feed may list several agencies; we take the most common
+    timezone as the feed default (a per-stop stop_timezone still overrides it).
+    Returns None when agency.txt is absent or carries no usable timezone.
+    """
+    path = os.path.join(feed_dir, "agency.txt")
+    if not os.path.exists(path):
+        return None
+    tallies: Counter = Counter()
+    for r in _rows(path):
+        tz = (r.get("agency_timezone") or "").strip()
+        if tz:
+            tallies[tz] += 1
+    if not tallies:
+        return None
+    return tallies.most_common(1)[0][0]
+
+
 def load_timetable(feed_dir: str) -> Timetable:
     tt = Timetable()
 
+    feed_tz = _feed_timezone(feed_dir)
     for r in _rows(os.path.join(feed_dir, "stops.txt")):
         lat = _to_float(r.get("stop_lat") or "0")
         lon = _to_float(r.get("stop_lon") or "0")
         if lat is None or lon is None:
             continue                       # skip a stop with unparseable coordinates
+        stop_tz = (r.get("stop_timezone") or "").strip() or feed_tz
         tt.add_stop(Stop(
             id=r["stop_id"],
             name=r.get("stop_name", ""),
             lat=lat, lon=lon,
             type=NodeType.RAIL_STATION,
+            tz=stop_tz,
         ))
 
     route_mode: dict[str, Mode] = {}

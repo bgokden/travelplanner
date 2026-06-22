@@ -42,6 +42,11 @@ class Stop:
     lon: float
     type: NodeType = NodeType.RAIL_STATION
     min_transfer: timedelta = DEFAULT_MIN_TRANSFER
+    # IANA timezone name (e.g. "Europe/Amsterdam") for this stop's local times.
+    # None means "unknown"; the scan treats an unknown-tz stop as a single
+    # default zone, so a single-timezone feed behaves exactly as before. It is
+    # only consulted once connections are materialized in absolute (UTC) time.
+    tz: str | None = None
 
 
 @dataclass(frozen=True)

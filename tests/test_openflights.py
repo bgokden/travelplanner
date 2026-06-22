@@ -49,6 +49,15 @@ def test_loads_airports_and_directed_routes(tmp_path):
                for t in tt.trips.values())
 
 
+def test_airport_timezone_is_captured(tmp_path):
+    a, r = _feed(tmp_path)
+    tt = load_openflights(a, r, depart_hours=(8,))
+    # Column 11 (tz database name) becomes Stop.tz, so synthetic local departure
+    # hours can later be anchored to the airport's real timezone.
+    assert tt.stops["AMS"].tz == "Europe/Amsterdam"
+    assert tt.stops["ZRH"].tz == "Europe/Zurich"
+
+
 def test_one_stop_and_unknown_airport_routes_dropped(tmp_path):
     a, r = _feed(tmp_path)
     tt = load_openflights(a, r, depart_hours=(8,))
