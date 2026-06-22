@@ -156,6 +156,8 @@ travelplanner demo                              # bundled offline sample, all ob
 travelplanner plan "47.0,7.0" "45.0,9.0"        # auto timetable (flights + GTFS by location)
 travelplanner plan "47.0,7.0" "45.0,9.0" --gtfs feed/ --objective cheapest  # your own feed
 travelplanner transit-prefetch "47.0,7.0" "45.0,9.0"  # cache a trip's data for offline use
+travelplanner transit-build "47.0,7.0" "45.0,9.0" trip.json  # save a composed timetable artifact
+travelplanner plan "47.0,7.0" "45.0,9.0" --timetable trip.json  # plan offline from the artifact
 ```
 
 From a source checkout (no global install), prefix with `uv run`, e.g.

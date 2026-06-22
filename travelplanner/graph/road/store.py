@@ -18,10 +18,9 @@ load (both cheap, O(n)).
 import json
 import os
 from array import array
-from datetime import date
 
 from travelplanner.graph.road.model import RoadGraph
-from travelplanner.graph.validity import ServiceCalendar, Validity
+from travelplanner.graph.validity import validity_from_json, validity_to_json
 
 FORMAT_VERSION = 4
 _META = "meta.json"
@@ -33,48 +32,6 @@ _ARC_CLASS = "arc_class.bin"
 _SIGNALS = "signals.bin"
 _RESTRICTED = "restricted_turns.bin"
 _EXP_ORDER = "expanded_order.bin"
-
-
-def _calendar_to_json(cal: ServiceCalendar | None):
-    if cal is None:
-        return None
-    return {
-        "start": cal.start.isoformat(),
-        "end": cal.end.isoformat(),
-        "weekdays": sorted(cal.weekdays),
-        "added": [d.isoformat() for d in sorted(cal.added)],
-        "removed": [d.isoformat() for d in sorted(cal.removed)],
-    }
-
-
-def _calendar_from_json(obj):
-    if obj is None:
-        return None
-    return ServiceCalendar(
-        start=date.fromisoformat(obj["start"]),
-        end=date.fromisoformat(obj["end"]),
-        weekdays=frozenset(obj["weekdays"]),
-        added=frozenset(date.fromisoformat(d) for d in obj["added"]),
-        removed=frozenset(date.fromisoformat(d) for d in obj["removed"]),
-    )
-
-
-def _validity_to_json(v: Validity):
-    return {
-        "calendar": _calendar_to_json(v.calendar),
-        "open_months": sorted(v.open_months),
-        "required_conditions": sorted(v.required_conditions),
-        "forbidden_conditions": sorted(v.forbidden_conditions),
-    }
-
-
-def _validity_from_json(obj) -> Validity:
-    return Validity(
-        calendar=_calendar_from_json(obj["calendar"]),
-        open_months=frozenset(obj["open_months"]),
-        required_conditions=frozenset(obj["required_conditions"]),
-        forbidden_conditions=frozenset(obj["forbidden_conditions"]),
-    )
 
 
 def _write_array(path: str, typecode: str, values) -> None:
@@ -115,7 +72,7 @@ def save_road_artifact(graph: RoadGraph, order, out_dir: str) -> str:
         # itemsize check. (Raw tofile is native-endian either way.)
         "itemsize_i": array("i").itemsize,
         "itemsize_q": array("q").itemsize,
-        "validity_table": [_validity_to_json(v) for v in graph.validity_table],
+        "validity_table": [validity_to_json(v) for v in graph.validity_table],
         "name_table": list(graph.name_table),
         "class_table": list(graph.class_table),
         "signal_count": len(graph.signal_nodes),
@@ -238,7 +195,7 @@ def load_road_artifact(out_dir: str) -> tuple[RoadGraph, list[int]]:
         head=head,
         base_seconds=base_seconds,
         arc_validity=arc_validity,
-        validity_table=tuple(_validity_from_json(v) for v in meta["validity_table"]),
+        validity_table=tuple(validity_from_json(v) for v in meta["validity_table"]),
         arc_name=arc_name,
         name_table=tuple(meta["name_table"]),
         arc_class=arc_class,

@@ -6,6 +6,10 @@ Pure stdlib (csv + datetime); no external dependencies.
 
 from travelplanner.graph.scheduled.csa import ConnectionScan, Journey, JourneyLeg
 from travelplanner.graph.scheduled.gtfs import load_timetable
+from travelplanner.graph.scheduled.store import (
+    load_timetable_artifact,
+    save_timetable,
+)
 from travelplanner.graph.scheduled.model import (
     Connection,
     Footpath,
@@ -38,4 +42,6 @@ __all__ = [
     "merge_timetables",
     "parse_gtfs_time",
     "load_timetable",
+    "save_timetable",
+    "load_timetable_artifact",
 ]

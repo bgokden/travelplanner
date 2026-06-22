@@ -72,3 +72,49 @@ class Validity:
 
 # Active on any date, under any conditions. Safe to share (immutable).
 ALWAYS = Validity()
+
+
+# Plain-dict (JSON-ready) serialization, shared by the road and scheduled
+# artifacts. These return/accept built-in types only; the caller does the
+# json.dump, so this module stays dependency-free.
+
+def calendar_to_json(cal: ServiceCalendar | None):
+    if cal is None:
+        return None
+    return {
+        "start": cal.start.isoformat(),
+        "end": cal.end.isoformat(),
+        "weekdays": sorted(cal.weekdays),
+        "added": [d.isoformat() for d in sorted(cal.added)],
+        "removed": [d.isoformat() for d in sorted(cal.removed)],
+    }
+
+
+def calendar_from_json(obj) -> ServiceCalendar | None:
+    if obj is None:
+        return None
+    return ServiceCalendar(
+        start=date.fromisoformat(obj["start"]),
+        end=date.fromisoformat(obj["end"]),
+        weekdays=frozenset(obj["weekdays"]),
+        added=frozenset(date.fromisoformat(d) for d in obj["added"]),
+        removed=frozenset(date.fromisoformat(d) for d in obj["removed"]),
+    )
+
+
+def validity_to_json(v: Validity) -> dict:
+    return {
+        "calendar": calendar_to_json(v.calendar),
+        "open_months": sorted(v.open_months),
+        "required_conditions": sorted(v.required_conditions),
+        "forbidden_conditions": sorted(v.forbidden_conditions),
+    }
+
+
+def validity_from_json(obj) -> Validity:
+    return Validity(
+        calendar=calendar_from_json(obj["calendar"]),
+        open_months=frozenset(obj["open_months"]),
+        required_conditions=frozenset(obj["required_conditions"]),
+        forbidden_conditions=frozenset(obj["forbidden_conditions"]),
+    )

@@ -73,12 +73,21 @@ def _cmd_demo(_args) -> int:
 
 def _cmd_plan(args) -> int:
     import warnings
+    from travelplanner.graph.scheduled import (
+        load_timetable, load_timetable_artifact)
     from travelplanner.trips import plan_trip
-    from travelplanner.graph.scheduled import load_timetable
 
-    # No --gtfs: auto-compose a timetable for the trip (flights + GTFS by
-    # location). An explicit --gtfs loads that feed instead.
-    tt = load_timetable(args.gtfs) if args.gtfs else None
+    # Timetable source, in precedence order: a prebuilt artifact (--timetable),
+    # a specific GTFS feed (--gtfs), or auto-compose for the trip (neither).
+    if args.timetable:
+        tt = load_timetable_artifact(args.timetable)
+        source = f"artifact {args.timetable}"
+    elif args.gtfs:
+        tt = load_timetable(args.gtfs)
+        source = args.gtfs
+    else:
+        tt = None
+        source = "auto (flights + GTFS by location)"
     at = (datetime.fromisoformat(args.at) if args.at
           else datetime.now().replace(microsecond=0))
     try:
@@ -92,7 +101,6 @@ def _cmd_plan(args) -> int:
         warnings.simplefilter("always")
         results = plan_trip(origin, dest, at, tt,
                             objective=Objective(args.objective))
-    source = args.gtfs if args.gtfs else "auto (flights + GTFS by location)"
     print(f"Plan: {origin.name} -> {dest.name}  departing {at:%Y-%m-%d %H:%M}"
           f"  [{args.objective}]  data: {source}\n")
     for w in caught:
@@ -106,10 +114,12 @@ def _cmd_plan(args) -> int:
             print(f"#{rank}")
             _print_itinerary(it)
             print()
-    if tt is None and results:
-        # Auto-sourced: credit only the datasets these results actually used,
-        # derived from the leg modes (a flight-only result must not credit GTFS).
-        # CLI access/egress is straight-line, not OSM, so road=False here.
+    # Auto-sourced and prebuilt-artifact timetables both embed third-party data
+    # (OpenFlights/GTFS), so credit it; a user-supplied --gtfs feed is the caller's
+    # own data and is not re-credited. Credit only the datasets these results
+    # actually used, from the leg modes (a flight-only result must not credit GTFS).
+    # CLI access/egress is straight-line, not OSM, so road=False here.
+    if results and (tt is None or args.timetable):
         from travelplanner.attribution import data_sources
         from travelplanner.models import Mode
         modes = {leg.mode for it in results for leg in it.legs}
@@ -119,7 +129,8 @@ def _cmd_plan(args) -> int:
             print("credits (data used in these results):")
             for a in sources:
                 print(f"  {a.line()}")
-            if ground:
+            # The specific feeds are only recoverable for an auto-sourced trip.
+            if ground and tt is None:
                 print('  per-feed details: travelplanner attribution '
                       f'"{args.origin}" "{args.destination}"')
     return 0
@@ -186,6 +197,31 @@ def _cmd_transit_prefetch(args) -> int:
           f"{len(tt.stops)} stops, {len(tt.trips)} trips cached")
     for n in notes:
         print(f"note: {n}")
+    return 0
+
+
+def _cmd_transit_build(args) -> int:
+    from travelplanner.attribution import data_sources, render
+    from travelplanner.auto_timetable import build_default_timetable
+    from travelplanner.graph.scheduled import save_timetable
+
+    try:
+        origin = _resolve_location(args.origin)
+        dest = _resolve_location(args.destination)
+    except ValueError as exc:
+        print(f"error: {exc}")
+        return 2
+    # Compose the trip's timetable once (online) and serialize it, so a later
+    # offline 'plan --timetable' loads it directly without re-downloading.
+    tt, notes = build_default_timetable(origin, dest, download=True)
+    save_timetable(tt, args.out)
+    print(f"built timetable artifact for {origin.name} -> {dest.name}: "
+          f"{len(tt.stops)} stops, {len(tt.trips)} trips -> {args.out}")
+    for n in notes:
+        print(f"note: {n}")
+    # The artifact embeds OpenFlights/GTFS data; surface the credit at build time.
+    print("\ndata sources (credit when you use or redistribute the artifact):")
+    print(render(data_sources(road=False)))
     return 0
 
 
@@ -256,6 +292,8 @@ def main(argv=None) -> int:
     p.add_argument("destination", help='"lat,lon" or a bundled city name')
     p.add_argument("--gtfs", help="GTFS feed directory (default: auto-compose "
                    "flights + GTFS for the trip; needs network on first use)")
+    p.add_argument("--timetable", help="prebuilt timetable artifact file (see "
+                   "'transit-build'); loads offline, overrides --gtfs/auto")
     p.add_argument("--at", help="departure time, ISO format (default: now)")
     p.add_argument("--objective", choices=[o.value for o in Objective],
                    default="air_priority", help="ranking objective")
@@ -265,6 +303,13 @@ def main(argv=None) -> int:
                              "feeds + flights) ahead of an offline 'plan'")
     tp.add_argument("origin", help='"lat,lon" or a bundled city name')
     tp.add_argument("destination", help='"lat,lon" or a bundled city name')
+
+    tb = sub.add_parser("transit-build",
+                        help="compose a trip's timetable and save it as an "
+                             "offline artifact (load with 'plan --timetable')")
+    tb.add_argument("origin", help='"lat,lon" or a bundled city name')
+    tb.add_argument("destination", help='"lat,lon" or a bundled city name')
+    tb.add_argument("out", help="output artifact file (JSON)")
 
     ab = sub.add_parser("attribution",
                         help="show the data sources and licenses for "
@@ -307,6 +352,8 @@ def main(argv=None) -> int:
         return _cmd_plan(args)
     if args.command == "transit-prefetch":
         return _cmd_transit_prefetch(args)
+    if args.command == "transit-build":
+        return _cmd_transit_build(args)
     if args.command == "attribution":
         return _cmd_attribution(args)
     if args.command == "drive":

@@ -1,6 +1,9 @@
-"""CLI surface tests that need no network (the attribution command)."""
+"""CLI surface tests that need no network (attribution + offline artifact plan)."""
 
 from travelplanner.cli import main
+from travelplanner.models import CostLevel, Mode
+from travelplanner.graph.scheduled import (
+    Stop, Timetable, make_trip, save_timetable)
 
 
 def test_attribution_lists_open_datasets(capsys):
@@ -21,3 +24,24 @@ def test_attribution_one_endpoint_asks_for_both(capsys):
     assert rc == 0
     assert "give both origin and destination" in out
     assert "OpenFlights" in out
+
+
+def test_plan_with_timetable_artifact_offline(tmp_path, capsys):
+    # A prebuilt artifact lets 'plan' run fully offline: no auto-compose, no
+    # network. Build a tiny flight network, save it, and plan over it.
+    tt = Timetable()
+    tt.add_stop(Stop("A", "Aport", 52.30, 4.76, tz="Europe/Amsterdam"))
+    tt.add_stop(Stop("B", "Bport", 47.46, 8.55, tz="Europe/Zurich"))
+    tt.add_trip(make_trip("FL", Mode.FLIGHT,
+                          [("A", "10:00", "10:00"), ("B", "11:30", "11:30")],
+                          cost_level=CostLevel.HIGH))
+    path = str(tmp_path / "tt.json")
+    save_timetable(tt, path)
+
+    rc = main(["plan", "52.30,4.76", "47.46,8.55", "--timetable", path,
+               "--at", "2026-07-01T07:00"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert f"artifact {path}" in out            # header names the artifact source
+    assert "flight" in out.lower()              # routed over the loaded flight
+    assert "OpenFlights" in out                 # artifact embeds flight data: credited

@@ -193,6 +193,13 @@ All notable changes to this project are documented here. The format is based on
   Austin -> Atlanta -> Zurich). The hub set is capped to the few busiest hubs in
   range, so the synthetic-flight count and scan time stay bounded (measured ~1.2k
   flights / ~10 ms for a transatlantic trip).
+- Offline timetable artifact: `travelplanner transit-build ORIGIN DEST out.json`
+  composes a trip's timetable (flights + covering GTFS) once and serializes it
+  (`save_timetable` / `load_timetable_artifact`, a compact JSON file), and `plan
+  --timetable out.json` loads it to route fully offline -- no catalog, feed, or
+  flight download at plan time. Durations are stored as float seconds so the
+  timetable round-trips exactly; the validity JSON helpers moved to `graph.validity`
+  and are now shared by the road and timetable artifacts.
 
 ### Changed
 - No more optional extras: the road engine (`routingkit-cch`, `osmium`) and the
