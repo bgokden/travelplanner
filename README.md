@@ -95,7 +95,8 @@ yourself.
 ## No data needed: auto-sourced timetables
 
 Omit the timetable and `plan_trip` composes one for the trip: the OpenFlights
-flight network (scoped to airports near the endpoints) plus the GTFS feed(s)
+flight network (airports near the endpoints, plus major hub airports so a trip
+with no direct flight can connect through a hub) plus the GTFS feed(s)
 whose coverage area spans the route, selected from the Mobility Database catalog
 and downloaded/cached on first use. Stale cache is refreshed the next time it is
 loaded (transit after a week, flights after a month); a refresh that fails offline

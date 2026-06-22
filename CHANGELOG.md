@@ -173,6 +173,14 @@ All notable changes to this project are documented here. The format is based on
   the active one (default: bundled table, offline); `city()`/`drive()`/
   `drive_matrix()` take a per-call `geocoder=`. Pre-warm the cache at build time to
   resolve names offline at runtime.
+- GTFS `frequencies.txt` is expanded into concrete runs: a headway-based trip
+  (departs every N seconds between a start and end time) becomes individual
+  departures shifted across the window, so frequency-defined service is scanned
+  like any other. Implausibly dense windows are skipped to bound the expansion.
+- Inter-feed transfers in the auto-sourced network: when a flight (or ferry) feed
+  is joined to ground transit, footpaths now link each airport/ferry terminal to
+  the nearby ground stops (`link_transfer_hubs`), so a trip can chain a train to
+  the airport with a flight instead of leaving the two networks disconnected.
 - GTFS `transfers.txt` is now honoured. Same-stop rows set a stop's minimum change
   time (type 1 timed -> no buffer, type 2 -> its minimum, type 3 -> transfers not
   possible there, modelled as `Stop.min_transfer=None` so the scan never changes
