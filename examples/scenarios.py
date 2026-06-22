@@ -9,7 +9,9 @@ Times are naive local; all stops here are within one timezone (Central
 European), so no cross-timezone conversion is involved.
 """
 
+import warnings
 from datetime import datetime
+from urllib.error import URLError
 
 from travelplanner import place, plan, plan_trip, Objective
 from travelplanner.models import CostLevel, LocationType, Mode
@@ -155,3 +157,20 @@ if __name__ == "__main__":
         it = plan_trip(origin, dest, depart, tt, access=access)[0]
         chain = " -> ".join(leg.mode.value for leg in it.legs)
         print(f"  access={access:8} {chain}, arrive {it.arrive_at:%H:%M}")
+
+    # No timetable at all: plan_trip auto-composes one for the trip (flights +
+    # GTFS by location). Unlike the scenarios above, this needs network on first
+    # run to download the catalog/feeds, so it degrades gracefully when offline.
+    print("\nplan_trip with NO timetable (auto-sourced flights + GTFS):")
+    ams = place("Amsterdam", LocationType.CITY, 52.3791, 4.9003)
+    zrh = place("Zurich", LocationType.CITY, 47.3769, 8.5417)
+    try:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            results = plan_trip(ams, zrh, datetime(2026, 7, 1, 8, 0),
+                                objective=Objective.AIR_PRIORITY)
+        for w in caught:
+            print(f"  note: {w.message}")
+        _show("  Amsterdam -> Zurich (auto):", results)
+    except (URLError, OSError) as exc:
+        print(f"  (skipped - no network to fetch catalog/feeds: {exc})")
