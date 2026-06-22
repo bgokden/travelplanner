@@ -23,7 +23,7 @@ from datetime import date
 from travelplanner.graph.road.model import RoadGraph
 from travelplanner.graph.validity import ServiceCalendar, Validity
 
-FORMAT_VERSION = 3
+FORMAT_VERSION = 4
 _META = "meta.json"
 _NODE_KEYS_TXT = "node_keys.txt"
 _NODE_KEYS_BIN = "node_keys.bin"
@@ -108,6 +108,11 @@ def save_road_artifact(graph: RoadGraph, order, out_dir: str) -> str:
         "has_names": has_names,
         "has_class": has_class,
         "int_node_keys": int_keys,
+        # Only the variable-width C types need a portability guard: array("i")
+        # (C int) and array("q") (C long long) can differ across platforms. The
+        # float32 "f" (IEEE-754 single, always 4 bytes) and int16 "h" (C short,
+        # 2 bytes everywhere CPython runs) columns are fixed-width, so they need no
+        # itemsize check. (Raw tofile is native-endian either way.)
         "itemsize_i": array("i").itemsize,
         "itemsize_q": array("q").itemsize,
         "validity_table": [_validity_to_json(v) for v in graph.validity_table],
@@ -131,16 +136,16 @@ def save_road_artifact(graph: RoadGraph, order, out_dir: str) -> str:
                   encoding="utf-8") as f:
             f.write("\n".join(graph.node_keys))
 
-    _write_array(os.path.join(out_dir, "latitude.bin"), "d", graph.latitude)
-    _write_array(os.path.join(out_dir, "longitude.bin"), "d", graph.longitude)
+    _write_array(os.path.join(out_dir, "latitude.bin"), "f", graph.latitude)
+    _write_array(os.path.join(out_dir, "longitude.bin"), "f", graph.longitude)
     _write_array(os.path.join(out_dir, "tail.bin"), "i", graph.tail)
     _write_array(os.path.join(out_dir, "head.bin"), "i", graph.head)
     _write_array(os.path.join(out_dir, "base_seconds.bin"), "i", graph.base_seconds)
-    _write_array(os.path.join(out_dir, "arc_validity.bin"), "i", graph.arc_validity)
+    _write_array(os.path.join(out_dir, "arc_validity.bin"), "h", graph.arc_validity)
     if has_names:
         _write_array(os.path.join(out_dir, _ARC_NAME), "i", graph.arc_name)
     if has_class:
-        _write_array(os.path.join(out_dir, _ARC_CLASS), "i", graph.arc_class)
+        _write_array(os.path.join(out_dir, _ARC_CLASS), "h", graph.arc_class)
     if graph.signal_nodes:
         _write_array(os.path.join(out_dir, _SIGNALS), "i",
                      sorted(graph.signal_nodes))
@@ -199,15 +204,15 @@ def load_road_artifact(out_dir: str) -> tuple[RoadGraph, list[int]]:
             raise ValueError(
                 f"node key count {len(node_keys)} != expected {node_count}")
 
-    latitude = _read_array(os.path.join(out_dir, "latitude.bin"), "d", node_count)
-    longitude = _read_array(os.path.join(out_dir, "longitude.bin"), "d", node_count)
+    latitude = _read_array(os.path.join(out_dir, "latitude.bin"), "f", node_count)
+    longitude = _read_array(os.path.join(out_dir, "longitude.bin"), "f", node_count)
     tail = _read_array(os.path.join(out_dir, "tail.bin"), "i", arc_count)
     head = _read_array(os.path.join(out_dir, "head.bin"), "i", arc_count)
     base_seconds = _read_array(os.path.join(out_dir, "base_seconds.bin"), "i", arc_count)
-    arc_validity = _read_array(os.path.join(out_dir, "arc_validity.bin"), "i", arc_count)
+    arc_validity = _read_array(os.path.join(out_dir, "arc_validity.bin"), "h", arc_count)
     arc_name = (_read_array(os.path.join(out_dir, _ARC_NAME), "i", arc_count)
                 if meta["has_names"] else None)
-    arc_class = (_read_array(os.path.join(out_dir, _ARC_CLASS), "i", arc_count)
+    arc_class = (_read_array(os.path.join(out_dir, _ARC_CLASS), "h", arc_count)
                  if meta.get("has_class") else None)
 
     signal_count = meta.get("signal_count", 0)

@@ -158,3 +158,37 @@ def test_string_keys_stay_text(tmp_path):
     save_road_artifact(g, CCHRoadRouter(g).order, str(tmp_path))
     assert (tmp_path / "node_keys.txt").exists()
     assert not (tmp_path / "node_keys.bin").exists()
+
+
+def test_graph_columns_use_compact_dtypes():
+    """Coordinates are float32 and the interned index columns are 16-bit, halving
+    those columns at country scale; a future widening would silently undo it."""
+    g = _graph(store_names=True)
+    assert g.latitude.typecode == "f" and g.longitude.typecode == "f"
+    assert g.arc_validity.typecode == "h"
+    assert g.arc_class.typecode == "h"
+    assert g.arc_name.typecode == "i"            # street-name table can exceed 16-bit
+    assert g.tail.typecode == "i" and g.head.typecode == "i"   # node indices need 32-bit
+
+
+def test_roundtrip_preserves_compact_dtypes(tmp_path):
+    """The artifact must store and reload the narrow dtypes, not re-widen them."""
+    g = _graph(store_names=True)
+    save_road_artifact(g, CCHRoadRouter(g).order, str(tmp_path))
+    h, _ = load_road_artifact(str(tmp_path))
+    assert h.latitude.typecode == "f" and h.longitude.typecode == "f"
+    assert h.arc_validity.typecode == "h" and h.arc_class.typecode == "h"
+
+
+def test_old_format_version_rejected(tmp_path):
+    """A stale-format artifact must fail loudly (rebuild), not misread its bytes
+    under the new dtypes."""
+    import json
+    g = _graph(store_names=True)
+    save_road_artifact(g, CCHRoadRouter(g).order, str(tmp_path))
+    meta_path = tmp_path / "meta.json"
+    meta = json.loads(meta_path.read_text())
+    meta["format_version"] = 3                   # a pre-compaction artifact
+    meta_path.write_text(json.dumps(meta))
+    with pytest.raises(ValueError, match="rebuild"):
+        load_road_artifact(str(tmp_path))

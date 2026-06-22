@@ -191,13 +191,16 @@ def build_expanded_graph(base: RoadGraph, *, uturn_seconds: float = 120.0,
                                turn_costs=turn_costs)
     lat, lon = base.latitude, base.longitude
     tail, head = base.tail, base.head
-    mid_lat = array("d", [(lat[tail[a]] + lat[head[a]]) / 2.0
+    # Match the base graph's narrow dtypes: midpoint coords are float32 (only used
+    # for CCH ordering) and the validity columns are 16-bit interned indices, so the
+    # turn-expanded graph does not re-widen what the base graph just packed.
+    mid_lat = array("f", [(lat[tail[a]] + lat[head[a]]) / 2.0
                           for a in range(base.arc_count)])
-    mid_lon = array("d", [(lon[tail[a]] + lon[head[a]]) / 2.0
+    mid_lon = array("f", [(lon[tail[a]] + lon[head[a]]) / 2.0
                           for a in range(base.arc_count)])
     av = base.arc_validity
-    validity_a = array("i", (av[a] for a in topo.turn_tail))
-    validity_b = array("i", (av[b] for b in topo.turn_head))
+    validity_a = array("h", (av[a] for a in topo.turn_tail))
+    validity_b = array("h", (av[b] for b in topo.turn_head))
     return ExpandedRoadGraph(
         base=base, latitude=mid_lat, longitude=mid_lon,
         tail=topo.turn_tail, head=topo.turn_head, turn_cost=topo.turn_extra,

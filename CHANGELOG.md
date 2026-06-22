@@ -205,6 +205,11 @@ All notable changes to this project are documented here. The format is based on
 - `drive()` reuses a cached customized road metric (`CCHRoadRouter.customized`)
   instead of rebuilding it per call, ~5x batch throughput; `customize()` still
   returns a fresh, mutable metric.
+- Road graph columns are packed into narrower dtypes: float32 coordinates (~0.6 m
+  precision, ample for snapping) and 16-bit interned validity/class indices,
+  cutting the per-node coordinate memory in half and trimming each arc -- about
+  800 MB off a 50M-node / 100M-arc country graph. The offline artifact stores the
+  same narrow dtypes (format version 4; rebuild older artifacts).
 - `Location` validates lat/lon range, so invalid coordinates raise instead of
   silently producing an empty `plan()` result (empty now means "no route", not
   "bad input").

@@ -217,8 +217,9 @@ faster drive-to-airport flight; the other objectives are unaffected.
 - Flight schedules are synthetic (real airports and routes from OpenFlights, but
   representative times, not live airline schedules); auto-sourced GTFS coverage
   is uneven by region. Supply your own feed for exact data.
-- Country-scale road graphs are memory-heavy (node bookkeeping); fine for a
-  region, large for a continent.
+- Country-scale road graphs are still memory-heavy, though the columns are packed
+  tight (float32 coordinates, 16-bit interned indices); fine for a region, large
+  for a continent.
 
 ## Learn more
 

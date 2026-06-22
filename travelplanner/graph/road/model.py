@@ -66,21 +66,29 @@ class RoadGraphBuilder:
     def __init__(self, store_names: bool = True) -> None:
         self._keys: list[str] = []
         self._index: dict[str, int] = {}
-        self._lat = array("d")
-        self._lon = array("d")
+        # Coordinates are float32: ~0.6 m precision at these latitudes, ample for
+        # nearest-node snapping, and half the memory of float64 at country scale.
+        self._lat = array("f")
+        self._lon = array("f")
         self._tail = array("i")
         self._head = array("i")
+        # base_seconds stays 32-bit: an arc's travel time has no small bound (a
+        # long ferry or coarse segment could exceed int16's ~9 h), so it is not
+        # narrowed -- unlike the bounded interned indices below.
         self._secs = array("i")
-        self._arc_validity = array("i")
+        # Validity and class are indices into tiny interned tables (a handful of
+        # entries each), so 16-bit indices suffice and halve those columns.
+        self._arc_validity = array("h")
         self._validity_table: list[Validity] = []
         self._validity_map: dict[Validity, int] = {}
         self._store_names = store_names
+        # Names intern into a large table (street names), so they keep 32-bit.
         self._arc_name = array("i") if store_names else None
         self._name_table: list[str] = []
         self._name_map: dict[str, int] = {}
         # Highway class is interned per arc (tiny table) so customization can
         # apply a per-class speed multiplier without storing strings per arc.
-        self._arc_class = array("i")
+        self._arc_class = array("h")
         self._class_table: list[str] = []
         self._class_map: dict[str, int] = {}
         self._signal_nodes: set[int] = set()
