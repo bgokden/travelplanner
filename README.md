@@ -4,14 +4,14 @@
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-Multimodal, door-to-door travel planning that prioritizes air travel.
+Multimodal, door-to-door travel planning.
 
 Given two locations (hotel, city, landmark, station, airport) and a departure
 time, it plans an end-to-end journey across **walking, driving, rail, ferry, and
 flight** — resolving access to and from transit, respecting **seasonal and
 conditional** edge availability (a winter-closed alpine pass, a summer-only
 ferry), and selecting across a **Pareto frontier** of total time, cost, and
-number of transfers, with **air prioritized**.
+number of transfers.
 
 It is built on established route-planning algorithms:
 
