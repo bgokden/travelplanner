@@ -16,18 +16,29 @@ from travelplanner.models import Itinerary, LocationType
 from travelplanner.graph.query import Objective
 
 
+def _in_zone(when, tz_name):
+    """Show an aware datetime in a leg endpoint's local zone; pass naive times
+    (a feed with no timezone data) through unchanged."""
+    if tz_name and when.tzinfo is not None:
+        from zoneinfo import ZoneInfo
+        return when.astimezone(ZoneInfo(tz_name))
+    return when
+
+
 def _print_itinerary(it: Itinerary, indent: str = "    ") -> None:
-    print(f"{indent}{it.primary_mode.value:6} arrive {it.arrive_at:%Y-%m-%d %H:%M}"
+    arrive = _in_zone(it.arrive_at, it.legs[-1].to_loc.tz if it.legs else None)
+    print(f"{indent}{it.primary_mode.value:6} arrive {arrive:%Y-%m-%d %H:%M}"
           f"  total {it.total_duration}  cost {it.cost_level.value}")
     clock = it.depart_at
     for leg in it.legs:
         clock = clock + leg.overhead
-        dep = clock
+        dep = _in_zone(clock, leg.from_loc.tz)
         clock = clock + leg.travel_time
+        arr = _in_zone(clock, leg.to_loc.tz)
         wait = (f"  (+{int(leg.overhead.total_seconds() // 60)}m wait)"
                 if leg.overhead.total_seconds() else "")
         print(f"{indent}  {leg.mode.value:6} {leg.from_loc.name} -> "
-              f"{leg.to_loc.name}  {dep:%H:%M}-{clock:%H:%M}{wait}")
+              f"{leg.to_loc.name}  {dep:%H:%M}-{arr:%H:%M}{wait}")
 
 
 def _resolve_location(text: str):

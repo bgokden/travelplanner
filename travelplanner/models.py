@@ -48,6 +48,10 @@ class Location:
     type: LocationType
     lat: float
     lon: float
+    # IANA timezone for displaying this place's local clock (e.g. an arrival
+    # airport's zone). None means "show in the trip's reference zone"; it is set
+    # on itinerary leg endpoints so each leg can render in its own local time.
+    tz: str | None = None
 
     def __post_init__(self) -> None:
         if not -90.0 <= self.lat <= 90.0:
@@ -58,8 +62,11 @@ class Location:
                 f"longitude {self.lon} out of range [-180, 180] for {self.name!r}")
 
     def to_dict(self) -> dict:
-        return {"name": self.name, "type": self.type.value,
-                "lat": self.lat, "lon": self.lon}
+        out = {"name": self.name, "type": self.type.value,
+               "lat": self.lat, "lon": self.lon}
+        if self.tz:
+            out["tz"] = self.tz
+        return out
 
 
 @dataclass

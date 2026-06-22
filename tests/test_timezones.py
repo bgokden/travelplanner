@@ -82,3 +82,27 @@ def test_plan_over_tz_aware_feed_reads_depart_as_origin_local():
     assert it.depart_at.tzinfo is not None              # aware for a tz feed
     assert it.depart_at.utcoffset() == timedelta(hours=2)   # CEST origin-local
     assert it.depart_at.strftime("%H:%M") == "08:00"   # same wall clock as input
+
+
+def test_international_itinerary_legs_carry_local_zones():
+    # A transatlantic flight: each leg endpoint carries its own zone so the
+    # output can render leave-Amsterdam / land-New-York in local time.
+    tt = Timetable()
+    tt.add_stop(Stop("AMS", "Schiphol", 52.31, 4.77, tz="Europe/Amsterdam"))
+    tt.add_stop(Stop("JFK", "New York JFK", 40.64, -73.78, tz="America/New_York"))
+    tt.add_trip(make_trip("FL", Mode.FLIGHT, [
+        ("AMS", "10:00", "10:00"), ("JFK", "12:00", "12:00")],
+        cost_level=CostLevel.HIGH))
+    origin = Location("Amsterdam", LocationType.CITY, 52.30, 4.76)
+    dest = Location("New York", LocationType.CITY, 40.65, -73.79)
+    res = plan(origin, dest, datetime(2026, 7, 1, 8, 0), tt,
+               GeometricConnector(tt.stops))
+    flight = next(it for it in res if any(l.mode is Mode.FLIGHT for l in it.legs))
+    legs = flight.legs
+    assert legs[0].from_loc.tz == "Europe/Amsterdam"      # origin door, origin zone
+    assert legs[-1].to_loc.tz == "America/New_York"        # dest door, dest zone
+    fl = next(l for l in legs if l.mode is Mode.FLIGHT)
+    assert fl.from_loc.tz == "Europe/Amsterdam"
+    assert fl.to_loc.tz == "America/New_York"
+    # Arrival renders ~noon in New York local, not in the Amsterdam origin zone.
+    assert flight.arrive_at.astimezone(NY).strftime("%H") == "12"

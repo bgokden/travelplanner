@@ -18,6 +18,7 @@ Candidate generation is mode-restricted diversification, not an exhaustive
 multi-label search.
 """
 
+from dataclasses import replace
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -52,7 +53,7 @@ _MODE_SETS = (
 def _stop_location(stop: Stop) -> Location:
     return Location(name=stop.name or stop.id,
                     type=_NODE_TO_LOCATION.get(stop.type, LocationType.STATION),
-                    lat=stop.lat, lon=stop.lon)
+                    lat=stop.lat, lon=stop.lon, tz=stop.tz)
 
 
 def _timed_to_legs(timed: list[tuple], depart_at: datetime) -> list[Leg]:
@@ -200,7 +201,13 @@ def _transit_itinerary(origin: Location, dest: Location, depart_at: datetime,
     a = access[board]
     timed: list[tuple] = []
 
+    # Give the door endpoints the timezone of their adjacent stop, so the first
+    # and last legs render in the traveler's local time at each end.
     board_loc = _stop_location(timetable.stops[board])
+    egress_stop_obj = timetable.stops[egress_stop]
+    origin = replace(origin, tz=origin.tz or board_loc.tz)
+    dest = replace(dest, tz=dest.tz or egress_stop_obj.tz)
+
     timed.append((a.mode, origin, board_loc, depart_at,
                   depart_at + timedelta(seconds=a.seconds), a.distance_km,
                   a.cost_level))

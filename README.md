@@ -203,11 +203,12 @@ faster drive-to-airport flight; the other objectives are unaffected.
 
 ## Limitations
 
-- Connections are **timezone-aware** (materialized in UTC from each stop's IANA
-  zone), so international trips are timed correctly. The itinerary still *displays*
-  every leg in the origin's local zone, though, rather than each leg in its own —
-  a cross-timezone arrival clock can therefore look shifted until per-leg local
-  rendering lands.
+- International trips are **timezone-correct end to end**: connections are
+  materialized in UTC from each stop's IANA zone, and each leg renders in its own
+  local time (leave Amsterdam 10:00, land New York 12:00). The one residual case
+  is a pure drive/walk trip that crosses a zone with no transit stop between the
+  ends — it is shown in the origin's zone, as there is no stop to read the
+  destination zone from.
 - Flight schedules are synthetic (real airports and routes from OpenFlights, but
   representative times, not live airline schedules); auto-sourced GTFS coverage
   is uneven by region. Supply your own feed for exact data.
