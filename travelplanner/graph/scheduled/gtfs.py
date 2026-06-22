@@ -23,6 +23,7 @@ from travelplanner.graph.scheduled.model import (
     Timetable,
     Trip,
     parse_gtfs_time,
+    valid_tz,
 )
 from travelplanner.graph.validity import ServiceCalendar, Validity
 
@@ -146,7 +147,7 @@ def _feed_timezone(feed_dir: str) -> str | None:
         return None
     tallies: Counter = Counter()
     for r in _rows(path):
-        tz = (r.get("agency_timezone") or "").strip()
+        tz = valid_tz((r.get("agency_timezone") or "").strip())
         if tz:
             tallies[tz] += 1
     if not tallies:
@@ -163,7 +164,7 @@ def load_timetable(feed_dir: str) -> Timetable:
         lon = _to_float(r.get("stop_lon") or "0")
         if lat is None or lon is None:
             continue                       # skip a stop with unparseable coordinates
-        stop_tz = (r.get("stop_timezone") or "").strip() or feed_tz
+        stop_tz = valid_tz((r.get("stop_timezone") or "").strip()) or feed_tz
         tt.add_stop(Stop(
             id=r["stop_id"],
             name=r.get("stop_name", ""),

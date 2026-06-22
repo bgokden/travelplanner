@@ -327,6 +327,29 @@ def test_merge_timetables_unions_and_is_first_wins():
     assert m.stops["B"].min_transfer == timedelta(minutes=5)   # first (a) wins
 
 
+def test_clip_timetable_keeps_corridor_trips_whole():
+    from travelplanner.graph.scheduled import clip_timetable
+    tt = Timetable()
+    tt.add_stop(Stop("A", "A", 47.0, 8.0))            # in corridor
+    tt.add_stop(Stop("B", "B", 47.2, 8.1))            # in corridor
+    tt.add_stop(Stop("X", "X", 10.5, 10.5))           # far, but interior to a kept trip
+    tt.add_stop(Stop("F1", "F1", 10.0, 10.0))         # far
+    tt.add_stop(Stop("F2", "F2", 10.2, 10.1))         # far
+    tt.add_trip(make_trip("IN", Mode.TRAIN, [
+        ("A", "09:00", "09:00"), ("B", "09:30", "09:30")]))
+    tt.add_trip(make_trip("OUT", Mode.TRAIN, [
+        ("F1", "09:00", "09:00"), ("F2", "09:30", "09:30")]))     # wholly outside
+    tt.add_trip(make_trip("EDGE", Mode.TRAIN, [
+        ("A", "11:00", "11:00"), ("F1", "12:00", "12:00")]))      # only 1 stop in box
+    tt.add_trip(make_trip("THRU", Mode.TRAIN, [
+        ("A", "13:00", "13:00"), ("X", "13:30", "13:30"),
+        ("B", "14:00", "14:00")]))                                # 2 in box, X interior
+    clipped = clip_timetable(tt, 46.5, 7.5, 47.5, 8.5)
+    assert set(clipped.trips) == {"IN", "THRU"}        # OUT and EDGE dropped
+    assert "X" in clipped.stops                        # interior out-of-box stop kept
+    assert "F1" not in clipped.stops and "F2" not in clipped.stops
+
+
 def test_earlier_vehicle_arrival_never_breaks_reachability():
     """Monotonicity invariant the by_trip domination bug violated: adding a run
     that reaches an intermediate stop EARLIER by vehicle must never make a

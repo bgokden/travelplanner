@@ -13,7 +13,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from travelplanner.models import CostLevel, Mode
 from travelplanner.graph.schema import NodeType
@@ -30,6 +30,23 @@ _UTC = timezone.utc
 @lru_cache(maxsize=512)
 def _zone(name: str) -> ZoneInfo:
     return ZoneInfo(name)
+
+
+def valid_tz(name: str | None) -> str | None:
+    """Return `name` if it is a loadable IANA timezone, else None.
+
+    Feeds carry junk in their timezone fields -- OpenFlights writes '\\N' for an
+    unknown zone, and an agency_timezone can be blank or typo'd. Cleaning these at
+    the loader boundary lets the scan trust every Stop.tz (an unloadable zone
+    would otherwise crash connection materialization mid-query).
+    """
+    if not name:
+        return None
+    try:
+        _zone(name)
+        return name
+    except (ZoneInfoNotFoundError, ValueError):
+        return None
 
 
 def parse_gtfs_time(value: str) -> timedelta:
@@ -294,3 +311,28 @@ def merge_timetables(*timetables: Timetable) -> Timetable:
             merged.trips.setdefault(tid, trip)
         merged.footpaths.extend(tt.footpaths)
     return merged
+
+
+def clip_timetable(tt: Timetable, min_lat: float, min_lon: float,
+                   max_lat: float, max_lon: float) -> Timetable:
+    """Restrict a timetable to a corridor bounding box: keep a trip only if at
+    least two of its stops fall inside the box, but keep that trip WHOLE (all its
+    stop-times and the stops they reference, even just-outside ones) so the route
+    stays continuous. This drops trips entirely outside the corridor -- the bulk
+    of a national feed -- so the scan over an auto-fetched feed stays tractable
+    without distorting any kept route.
+    """
+    in_box = {sid for sid, s in tt.stops.items()
+              if min_lat <= s.lat <= max_lat and min_lon <= s.lon <= max_lon}
+    out = Timetable()
+    for tid, trip in tt.trips.items():
+        ids = [st.stop_id for st in trip.stop_times]
+        if sum(1 for x in ids if x in in_box) < 2:
+            continue
+        out.trips[tid] = trip
+        for sid in ids:
+            if sid in tt.stops and sid not in out.stops:
+                out.stops[sid] = tt.stops[sid]
+    out.footpaths = [fp for fp in tt.footpaths
+                     if fp.from_stop in out.stops and fp.to_stop in out.stops]
+    return out

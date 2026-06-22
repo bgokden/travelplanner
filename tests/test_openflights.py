@@ -58,6 +58,24 @@ def test_airport_timezone_is_captured(tmp_path):
     assert tt.stops["ZRH"].tz == "Europe/Zurich"
 
 
+def test_invalid_or_null_airport_timezone_becomes_none(tmp_path):
+    # OpenFlights writes "\\N" for an unknown zone; a feed can also carry a
+    # bogus name. Both must clean to None, not crash connection materialization.
+    airports = (
+        '1,"A","CityA","X","AAA","AAAA",10.0,10.0,0,0,"U","\\N","airport","src"\n'
+        '2,"B","CityB","X","BBB","BBBB",11.0,11.0,0,0,"U","Not/AZone","airport","src"\n'
+    )
+    routes = "ZZ,1,AAA,1,BBB,2,,0,738\nZZ,1,BBB,2,AAA,1,,0,738\n"
+    a = tmp_path / "airports.dat"
+    a.write_text(airports, encoding="utf-8")
+    r = tmp_path / "routes.dat"
+    r.write_text(routes, encoding="utf-8")
+    tt = load_openflights(str(a), str(r), depart_hours=(8,))
+    assert set(tt.stops) == {"AAA", "BBB"}
+    assert tt.stops["AAA"].tz is None        # "\\N" null marker
+    assert tt.stops["BBB"].tz is None        # unloadable zone name
+
+
 def test_one_stop_and_unknown_airport_routes_dropped(tmp_path):
     a, r = _feed(tmp_path)
     tt = load_openflights(a, r, depart_hours=(8,))

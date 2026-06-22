@@ -167,8 +167,8 @@ def _select_connectors(origin: Location, dest: Location, timetable: Timetable, *
     return [_mode_connector("car", timetable)]
 
 
-def plan_trip(origin, dest, depart_at: datetime, timetable: Timetable, *,
-              objective: Objective = Objective.AIR_PRIORITY, top_n: int = 3,
+def plan_trip(origin, dest, depart_at: datetime, timetable: Timetable | None = None,
+              *, objective: Objective = Objective.AIR_PRIORITY, top_n: int = 3,
               conditions: frozenset = frozenset(), geocoder=None,
               road: bool = False, turn_aware: bool = False,
               access: str = "car", egress: str | None = None,
@@ -179,8 +179,11 @@ def plan_trip(origin, dest, depart_at: datetime, timetable: Timetable, *,
     origin/dest accept the same forms as `drive()`: a Location, a (lat, lon)
     tuple, a "lat,lon" string, or a place name (resolved via the active geocoder,
     or a per-call `geocoder=`). `timetable` is a GTFS Timetable
-    (`load_timetable(feed_dir)` or `sample_timetable()`); transit quality is feed
-    quality, and feeds are not auto-discovered (you supply one).
+    (`load_timetable(feed_dir)` or `sample_timetable()`). If omitted, one is
+    auto-composed for the trip: the OpenFlights flight network plus the GTFS
+    feed(s) whose coverage area spans the route (Mobility Database catalog),
+    fetched and cached on first use. Coverage gaps are reported via warnings;
+    pass an explicit `timetable` to control the data exactly.
 
     Connector selection: an explicit `connector=` wins and fully defines access/
     egress, so `road`/`access`/`egress` are then ignored. Else with `road=True` and
@@ -225,6 +228,13 @@ def plan_trip(origin, dest, depart_at: datetime, timetable: Timetable, *,
         _validate_modes(access, egress, road, turn_aware)
     o = _coerce(origin, geocoder=geocoder)
     d = _coerce(dest, geocoder=geocoder)
+
+    if timetable is None:
+        import warnings
+        from travelplanner.auto_timetable import build_default_timetable
+        timetable, notes = build_default_timetable(o, d)
+        for note in notes:
+            warnings.warn(f"plan_trip: {note}", stacklevel=2)
 
     connectors = _select_connectors(o, d, timetable, access=access, egress=egress,
                                     road=road, turn_aware=turn_aware, region=region,

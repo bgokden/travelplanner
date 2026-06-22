@@ -96,6 +96,15 @@ def test_no_agency_file_means_unknown_timezone(tmp_path):
     assert all(s.tz is None for s in tt.stops.values())
 
 
+def test_invalid_agency_timezone_is_ignored(tmp_path):
+    _build_feed(tmp_path)
+    _write(tmp_path / "agency.txt", [
+        {"agency_id": "A1", "agency_name": "R", "agency_url": "http://x",
+         "agency_timezone": "Not/AZone"}])     # not a loadable IANA zone
+    tt = load_timetable(str(tmp_path))
+    assert all(s.tz is None for s in tt.stops.values())
+
+
 def test_weekday_service_active_and_inactive(tmp_path):
     _build_feed(tmp_path)
     csa = ConnectionScan(load_timetable(str(tmp_path)))

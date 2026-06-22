@@ -26,7 +26,8 @@ from functools import lru_cache
 from travelplanner.geo import haversine
 from travelplanner.models import CostLevel, Mode
 from travelplanner.graph.schema import NodeType
-from travelplanner.graph.scheduled.model import Stop, StopTime, Timetable, Trip
+from travelplanner.graph.scheduled.model import (
+    Stop, StopTime, Timetable, Trip, valid_tz)
 
 AIRPORTS_URL = ("https://raw.githubusercontent.com/jpatokal/openflights/"
                 "master/data/airports.dat")
@@ -72,11 +73,11 @@ def _airports(path: str, keep) -> dict[str, Stop]:
                 continue
             # Column 11 is the IANA tz database name (e.g. "Europe/Amsterdam");
             # it is what makes synthetic departure hours mean local airport time
-            # once flights are materialized in absolute (UTC) time.
-            tz = row[11].strip() if len(row) > 11 else ""
+            # once flights are materialized in absolute (UTC) time. OpenFlights
+            # writes "\\N" when unknown, so validate before keeping it.
+            tz = valid_tz(row[11].strip() if len(row) > 11 else "")
             out[iata] = Stop(id=iata, name=row[1].strip() or iata,
-                             lat=lat, lon=lon, type=NodeType.AIRPORT,
-                             tz=tz or None)
+                             lat=lat, lon=lon, type=NodeType.AIRPORT, tz=tz)
     return out
 
 
