@@ -164,8 +164,12 @@ class ConnectionScan:
             u, v, r = c.dep_stop, c.arr_stop, c.run_id
             if r not in boarded:
                 af_u, av_u = arr_foot.get(u), arr_veh.get(u)
-                veh_ready = (av_u + self.tt.transfer_time(u)
-                             if av_u is not None else None)
+                # transfer_time is None when changing vehicles is not allowed here
+                # (GTFS transfer_type 3): a vehicle arrival can never board another
+                # run at u, though a foot/source arrival (af_u) still can.
+                change = self.tt.transfer_time(u)
+                veh_ready = (av_u + change
+                             if av_u is not None and change is not None else None)
                 ready = self._earlier(af_u, veh_ready)
                 if ready is None or ready > c.departure:
                     continue

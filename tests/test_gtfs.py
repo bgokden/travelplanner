@@ -286,3 +286,64 @@ def test_loader_reads_latin1_feed(tmp_path):
     (tmp_path / "stops.txt").write_bytes(rows.encode("latin-1"))
     tt = load_timetable(str(tmp_path))     # no crash on the non-UTF-8 bytes
     assert tt.stops["A"].name == "Zürich"
+
+
+def _build_transfers_feed(d):
+    _write(d / "stops.txt", [
+        {"stop_id": "A", "stop_name": "A", "stop_lat": "46.9", "stop_lon": "7.4"},
+        {"stop_id": "B", "stop_name": "B", "stop_lat": "46.7", "stop_lon": "7.6"},
+        {"stop_id": "C", "stop_name": "C", "stop_lat": "46.3", "stop_lon": "8.0"},
+        {"stop_id": "P", "stop_name": "P", "stop_lat": "46.70", "stop_lon": "7.60"},
+        {"stop_id": "Q", "stop_name": "Q", "stop_lat": "46.71", "stop_lon": "7.61"},
+        {"stop_id": "M", "stop_name": "M", "stop_lat": "46.50", "stop_lon": "7.00"},
+        {"stop_id": "N", "stop_name": "N", "stop_lat": "46.50", "stop_lon": "7.00"},
+    ])
+    _write(d / "routes.txt", [{"route_id": "R1", "route_type": "2"}])
+    _write(d / "calendar.txt", [
+        {"service_id": "WD", "monday": "1", "tuesday": "1", "wednesday": "1",
+         "thursday": "1", "friday": "1", "saturday": "0", "sunday": "0",
+         "start_date": "20260101", "end_date": "20261231"}])
+    _write(d / "trips.txt", [{"route_id": "R1", "service_id": "WD", "trip_id": "TR1"}])
+    _write(d / "stop_times.txt", [
+        {"trip_id": "TR1", "stop_sequence": "1", "stop_id": "A",
+         "arrival_time": "09:00:00", "departure_time": "09:00:00"},
+        {"trip_id": "TR1", "stop_sequence": "2", "stop_id": "B",
+         "arrival_time": "09:30:00", "departure_time": "09:30:00"}])
+    _write(d / "transfers.txt", [
+        {"from_stop_id": "A", "to_stop_id": "A", "transfer_type": "2",
+         "min_transfer_time": "600"},                    # same-stop, 10 min minimum
+        {"from_stop_id": "B", "to_stop_id": "B", "transfer_type": "3",
+         "min_transfer_time": ""},                       # same-stop, not possible
+        {"from_stop_id": "C", "to_stop_id": "C", "transfer_type": "1",
+         "min_transfer_time": ""},                       # same-stop, timed -> 0
+        {"from_stop_id": "P", "to_stop_id": "Q", "transfer_type": "2",
+         "min_transfer_time": "180"},                    # inter-stop, 3 min
+        {"from_stop_id": "Q", "to_stop_id": "P", "transfer_type": "0",
+         "min_transfer_time": ""},                       # inter-stop, estimate walk
+        {"from_stop_id": "A", "to_stop_id": "C", "transfer_type": "3",
+         "min_transfer_time": ""},                       # inter-stop, not possible
+        {"from_stop_id": "M", "to_stop_id": "N", "transfer_type": "0",
+         "min_transfer_time": ""},                       # co-located, no time given
+    ])
+
+
+def test_transfers_set_min_change_times_and_footpaths(tmp_path):
+    _build_transfers_feed(tmp_path)
+    tt = load_timetable(str(tmp_path))
+    # Same-stop rows set the stop's minimum change time.
+    assert tt.stops["A"].min_transfer == timedelta(minutes=10)   # explicit minimum
+    assert tt.stops["B"].min_transfer is None                    # type 3: forbidden
+    assert tt.stops["C"].min_transfer == timedelta(0)            # type 1: timed
+    # Inter-stop rows become footpaths (none for type 3).
+    fps = {(f.from_stop, f.to_stop): f.duration for f in tt.footpaths}
+    assert fps[("P", "Q")] == timedelta(minutes=3)               # explicit min time
+    assert ("Q", "P") in fps and fps[("Q", "P")] > timedelta()   # estimated walk
+    assert ("A", "C") not in fps                                 # type 3: no footpath
+    assert fps[("M", "N")] == timedelta(minutes=1)               # co-located: floored
+
+
+def test_no_transfers_file_leaves_defaults(tmp_path):
+    _build_feed(tmp_path)                       # the standard feed has no transfers.txt
+    tt = load_timetable(str(tmp_path))
+    assert tt.stops["A"].min_transfer == timedelta(minutes=5)    # DEFAULT_MIN_TRANSFER
+    assert tt.footpaths == []

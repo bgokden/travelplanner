@@ -13,6 +13,7 @@ import csv
 import io
 import os
 from collections import Counter
+from dataclasses import replace
 from datetime import date, timedelta
 
 from travelplanner.models import CostLevel, Mode
@@ -228,8 +229,86 @@ def load_timetable(feed_dir: str) -> Timetable:
         except ValueError:
             continue   # skip a trip with non-monotonic stop_times (invalid data)
 
+    _apply_transfers(tt, feed_dir)
     _apply_frequencies(tt, feed_dir)
     return tt
+
+
+# Walking speed for an inter-stop transfer whose row gives no minimum time: the
+# footpath duration is then estimated from the distance between the two stops.
+_TRANSFER_WALK_KMH = 4.5
+
+# Floor for an inter-stop transfer that resolves to no positive time (two stop ids
+# at the same coordinates with no stated minimum): the feed asserted the transfer
+# is possible, so model a short walk rather than dropping the edge.
+_MIN_INTER_STOP_TRANSFER = timedelta(minutes=1)
+
+
+def _transfer_walk_time(a: Stop, b: Stop) -> timedelta:
+    from travelplanner.geo import haversine
+    km = haversine(a.lat, a.lon, b.lat, b.lon)
+    return timedelta(hours=km / _TRANSFER_WALK_KMH)
+
+
+def _apply_same_stop_transfer(tt: Timetable, stop_id: str, ttype: int,
+                              min_time: timedelta | None) -> None:
+    """Set a stop's minimum change time from a same-stop transfers.txt row.
+
+    min_transfer_time is defined by GTFS for transfer_type 2; type 1 (timed) is a
+    guaranteed connection with no buffer, and type 0 keeps the default unless the
+    feed supplies a time anyway.
+    """
+    if ttype == 3:
+        new_min = None                       # transfers not possible at this stop
+    elif ttype == 1:
+        new_min = timedelta(0)               # timed: guaranteed, the vehicle waits
+    elif min_time is not None:
+        new_min = min_time                   # type 2 minimum (or a type 0 time)
+    else:
+        return                               # type 0/2 with no time: leave default
+    tt.stops[stop_id] = replace(tt.stops[stop_id], min_transfer=new_min)
+
+
+def _apply_inter_stop_transfer(tt: Timetable, frm: str, to: str, ttype: int,
+                               min_time: timedelta | None) -> None:
+    """Add a footpath for an inter-stop transfers.txt row (none for type 3)."""
+    if ttype == 3:
+        return                               # not possible: add no transfer edge
+    if min_time is not None and min_time > timedelta():
+        dur = min_time
+    else:
+        dur = _transfer_walk_time(tt.stops[frm], tt.stops[to])
+        if dur <= timedelta():               # co-located stops: a Footpath needs a
+            dur = _MIN_INTER_STOP_TRANSFER   # positive time, so floor it, not drop
+    tt.add_footpath(frm, to, dur)
+
+
+def _apply_transfers(tt: Timetable, feed_dir: str) -> None:
+    """Apply GTFS transfers.txt rules to the timetable.
+
+    Same-stop rows (from==to) set the stop's minimum change time; inter-stop rows
+    add a footpath so the scan can change between the two stops. transfer_type:
+    0 recommended, 1 timed (guaranteed, no buffer), 2 minimum time, 3 not possible
+    (a same-stop 3 forbids changing vehicles there; an inter-stop 3 adds nothing).
+    A row referencing a stop absent from stops.txt is skipped. Feeds without
+    transfers.txt are unaffected.
+    """
+    path = os.path.join(feed_dir, "transfers.txt")
+    if not os.path.exists(path):
+        return
+    for r in _rows(path):
+        frm = (r.get("from_stop_id") or "").strip()
+        to = (r.get("to_stop_id") or "").strip()
+        if not frm or not to or frm not in tt.stops or to not in tt.stops:
+            continue
+        ttype = _to_int(r.get("transfer_type"), 0)
+        secs = _to_int(r.get("min_transfer_time"))
+        min_time = (timedelta(seconds=secs)
+                    if secs is not None and secs >= 0 else None)
+        if frm == to:
+            _apply_same_stop_transfer(tt, frm, ttype, min_time)
+        else:
+            _apply_inter_stop_transfer(tt, frm, to, ttype, min_time)
 
 
 # A single frequencies window expanding to more runs than this is implausible

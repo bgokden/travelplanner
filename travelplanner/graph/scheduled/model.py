@@ -68,7 +68,11 @@ class Stop:
     lat: float
     lon: float
     type: NodeType = NodeType.RAIL_STATION
-    min_transfer: timedelta = DEFAULT_MIN_TRANSFER
+    # Minimum time to change to another vehicle at this stop. None means transfers
+    # are not possible here (GTFS transfer_type 3): a vehicle arrival can never
+    # board another vehicle at this stop, though starting here or walking in still
+    # can. Defaults to DEFAULT_MIN_TRANSFER.
+    min_transfer: timedelta | None = DEFAULT_MIN_TRANSFER
     # IANA timezone name (e.g. "Europe/Amsterdam") for this stop's local times.
     # None means "unknown"; the scan treats an unknown-tz stop as a single
     # default zone, so a single-timezone feed behaves exactly as before. It is
@@ -170,7 +174,10 @@ class Timetable:
             out.setdefault(fp.from_stop, []).append(fp)
         return out
 
-    def transfer_time(self, stop_id: str) -> timedelta:
+    def transfer_time(self, stop_id: str) -> timedelta | None:
+        """Minimum change time at a stop. None means transfers are not possible
+        here (no vehicle-to-vehicle change); the scan then never boards a second
+        vehicle off a vehicle arrival at this stop."""
         stop = self.stops.get(stop_id)
         return stop.min_transfer if stop else DEFAULT_MIN_TRANSFER
 

@@ -409,3 +409,59 @@ def test_earlier_vehicle_arrival_never_breaks_reachability():
             {"S4": dt(8, 0)}, "D")
         assert j is not None, f"spoiler at 09:{m:02d} broke reachability"
         assert j.arrive <= base.arrive, f"spoiler at 09:{m:02d} delayed arrival"
+
+
+def test_forbidden_transfer_blocks_vehicle_change_but_not_boarding():
+    """A stop with min_transfer=None (GTFS transfer_type 3) cannot be used to change
+    vehicles -- arriving by one trip cannot board another -- but starting there
+    (a source) still boards normally."""
+    tt = Timetable()
+    _stop(tt, "A")
+    _stop(tt, "C")
+    tt.add_stop(Stop(id="B", name="B", lat=0.0, lon=0.0, min_transfer=None))
+    tt.add_trip(make_trip("T1", Mode.TRAIN, [
+        ("A", "09:00", "09:00"), ("B", "09:30", "09:30")]))
+    tt.add_trip(make_trip("T2", Mode.TRAIN, [
+        ("B", "09:40", "09:40"), ("C", "10:00", "10:00")]))
+    # Arriving at B by T1 cannot change to T2, so C is unreachable from A.
+    assert ConnectionScan(tt).query({"A": dt(8, 0)}, "C") is None
+    # Starting at B, boarding T2 is fine: B -> C works.
+    j = ConnectionScan(tt).query({"B": dt(9, 0)}, "C")
+    assert j is not None and j.arrive == dt(10, 0)
+
+
+def test_normal_transfer_allows_the_same_vehicle_change():
+    """The same timetable with B's default change time DOES connect A -> C, so the
+    block above is the transfer_type 3 rule, not the schedule."""
+    tt = Timetable()
+    for s in "ABC":
+        _stop(tt, s, transfer_min=5)
+    tt.add_trip(make_trip("T1", Mode.TRAIN, [
+        ("A", "09:00", "09:00"), ("B", "09:30", "09:30")]))
+    tt.add_trip(make_trip("T2", Mode.TRAIN, [
+        ("B", "09:40", "09:40"), ("C", "10:00", "10:00")]))
+    j = ConnectionScan(tt).query({"A": dt(8, 0)}, "C")
+    assert j is not None and j.arrive == dt(10, 0)
+
+
+def test_timed_transfer_zero_buffer_allows_a_tight_connection():
+    """A min_transfer=0 stop (GTFS transfer_type 1, timed) lets a vehicle arrival
+    board a same-instant onward departure that the 5-minute default would miss."""
+    def tt_with(buffer):
+        tt = Timetable()
+        _stop(tt, "A")
+        _stop(tt, "C")
+        tt.add_stop(Stop(id="B", name="B", lat=0.0, lon=0.0, min_transfer=buffer))
+        tt.add_trip(make_trip("T1", Mode.TRAIN, [
+            ("A", "09:00", "09:00"), ("B", "09:30", "09:30")]))
+        tt.add_trip(make_trip("T2", Mode.TRAIN, [
+            ("B", "09:30", "09:30"), ("C", "10:00", "10:00")]))   # departs on arrival
+        return tt
+
+    # The timed (0-buffer) transfer makes the same-instant connection: arrive 10:00.
+    tight = ConnectionScan(tt_with(timedelta(0))).query({"A": dt(8, 0)}, "C")
+    assert tight is not None and tight.arrive == dt(10, 0)
+    # The 5-minute default misses the 09:30 -> 09:30 connection, so it can only take
+    # a later run (the next daily departure) and arrives strictly later.
+    default = ConnectionScan(tt_with(timedelta(minutes=5))).query({"A": dt(8, 0)}, "C")
+    assert default is not None and default.arrive > tight.arrive

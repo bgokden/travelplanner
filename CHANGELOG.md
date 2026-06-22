@@ -173,6 +173,12 @@ All notable changes to this project are documented here. The format is based on
   the active one (default: bundled table, offline); `city()`/`drive()`/
   `drive_matrix()` take a per-call `geocoder=`. Pre-warm the cache at build time to
   resolve names offline at runtime.
+- GTFS `transfers.txt` is now honoured. Same-stop rows set a stop's minimum change
+  time (type 1 timed -> no buffer, type 2 -> its minimum, type 3 -> transfers not
+  possible there, modelled as `Stop.min_transfer=None` so the scan never changes
+  vehicles at that stop while still allowing boarding); inter-stop rows become
+  footpaths (the stated minimum time, or the walking time between the stops when
+  none is given; type 3 adds none). `Timetable.transfer_time` may now return None.
 
 ### Changed
 - No more optional extras: the road engine (`routingkit-cch`, `osmium`) and the
