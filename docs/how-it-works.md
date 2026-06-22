@@ -142,19 +142,35 @@ The origin/destination can be any `LocationType` (`CITY`, `LANDMARK`, `STATION`,
 `AIRPORT`, `HOTEL`); routing is by coordinates and the type is a label — starting
 at a station or airport just gives a near-zero access hop.
 
+## No timetable needed
+
+The examples above pass an explicit timetable to show the full setup. In practice
+you can omit it: `plan_trip` auto-composes one for the trip — the OpenFlights
+flight network plus the GTFS feed(s) selected by location from the Mobility
+Database catalog, downloaded and cached on first use.
+
+```python
+from travelplanner import plan_trip
+
+results = plan_trip("Amsterdam", "Zurich", depart)   # no timetable
+# -> car -> Amsterdam Airport Schiphol -> flight -> Zürich Airport -> car
+```
+
+From the CLI it is the default, too: `travelplanner plan "52.37,4.90" "47.38,8.54"`.
+
 ## Run it yourself
 
 ```bash
 git clone https://github.com/bgokden/travelplanner.git && cd travelplanner
 uv sync                                  # install (not yet on PyPI)
 uv run travelplanner demo                # the bundled sample, every objective
-uv run python examples/scenarios.py      # the examples above
+uv run python examples/scenarios.py      # the examples above + the no-timetable run
 ```
 
 ## About these examples
 
 The timetables here are small and illustrative — the engine routes over whatever
-schedule/road data you give it (e.g. a GTFS feed via `load_timetable(...)`).
-Times are naive local; every stop above is within one timezone, and
-cross-timezone international flights are a known limitation. The cost band is
-qualitative, not real fares.
+schedule/road data you give it (a GTFS feed via `load_timetable(...)`, or the
+auto-sourced data above). Times are timezone-aware (computed in UTC, shown in
+local time); every stop in these examples is within one timezone. Flight times
+are synthetic and the cost band is qualitative, not real fares.

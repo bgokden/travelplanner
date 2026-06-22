@@ -7,6 +7,21 @@ All notable changes to this project are documented here. The format is based on
 ## [Unreleased]
 
 ### Added
+- Auto-sourced timetables (`plan_trip` with no `Timetable`, and the default for
+  `travelplanner plan`): omit the feed and one is composed for the trip -- the
+  OpenFlights flight network scoped to airports near the endpoints, plus the GTFS
+  feed(s) whose bounding box covers the route, selected from the Mobility Database
+  catalog (`transit_catalog`), downloaded and cached, then clipped to the trip
+  corridor and merged (`auto_timetable.build_default_timetable`,
+  `merge_timetables`, `clip_timetable`). Coverage gaps surface as warnings; GTFS
+  coverage is uneven by region and flight times are synthetic, so supply a feed
+  for exact data.
+- Timezone-aware connections: stops carry an IANA timezone (`Stop.tz`, read from
+  GTFS `agency.txt`/`stop_timezone` and the OpenFlights tz column, validated at
+  load). A feed with timezone data materializes connections in absolute UTC via
+  the stdlib `zoneinfo`, so the scan runs in one frame and international trips are
+  timed correctly across zones; a naive departure is read as local at the origin.
+  A feed with no timezone data stays naive, so single-zone behavior is unchanged.
 - OpenFlights flight data (`load_openflights`): build a Timetable from the open
   OpenFlights airport + route dataset. Airports become AIRPORT stops and each
   directed non-stop route becomes synthetic daily flights whose duration is
@@ -151,8 +166,8 @@ All notable changes to this project are documented here. The format is based on
 
 ### Changed
 - No more optional extras: the road engine (`routingkit-cch`, `osmium`) and the
-  calendar package (`holidays`) are now core dependencies, so `pip install
-  travelplanner` gets every feature and `pytest` runs the whole suite with nothing
+  calendar package (`holidays`) are now core dependencies, so one install
+  gets every feature and `pytest` runs the whole suite with nothing
   skipped. The `road` and `calendar` extras are removed; only a `dev` extra
   (pytest) remains. Installing now needs a C++17 compiler with OpenMP (for the
   source-built road engine). Tests no longer gate on `pytest.importorskip`, and CI

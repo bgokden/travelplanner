@@ -54,10 +54,11 @@ uv run travelplanner demo
 ```
 
 In code, `plan_trip` is the one-call, door-to-door entry point: give it two
-locations (a name, a `"lat,lon"` string, a tuple, or a `Location`), a departure
-time, and a `Timetable`. It geocodes the endpoints, picks a connector, and plans
-the whole journey — you do not hand-build a connector. The package ships a sample
-so you can run immediately:
+locations (a name, a `"lat,lon"` string, a tuple, or a `Location`) and a
+departure time. It geocodes the endpoints, picks a connector, and plans the whole
+journey — you do not hand-build a connector. The `Timetable` is optional: omit it
+and one is auto-composed for the trip (see "No data needed" below). The package
+also ships a sample timetable so you can run fully offline:
 
 ```python
 from travelplanner import plan_trip, Objective, sample_timetable, sample_trip
@@ -202,8 +203,11 @@ faster drive-to-airport flight; the other objectives are unaffected.
 
 ## Limitations
 
-- Times are treated as **naive local times** — multi-timezone international
-  flights are not yet handled correctly.
+- Connections are **timezone-aware** (materialized in UTC from each stop's IANA
+  zone), so international trips are timed correctly. The itinerary still *displays*
+  every leg in the origin's local zone, though, rather than each leg in its own —
+  a cross-timezone arrival clock can therefore look shifted until per-leg local
+  rendering lands.
 - Flight schedules are synthetic (real airports and routes from OpenFlights, but
   representative times, not live airline schedules); auto-sourced GTFS coverage
   is uneven by region. Supply your own feed for exact data.
