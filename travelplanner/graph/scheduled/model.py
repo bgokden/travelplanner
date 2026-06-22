@@ -322,6 +322,39 @@ def merge_timetables(*timetables: Timetable) -> Timetable:
     return merged
 
 
+_TRANSFER_HUB_TYPES = frozenset({NodeType.AIRPORT, NodeType.FERRY_TERMINAL})
+
+
+def link_transfer_hubs(tt: Timetable, *, max_walk_km: float = 2.0,
+                       walk_kmh: float = 4.5, max_links: int = 6) -> Timetable:
+    """Add walking footpaths between each air/ferry hub and its nearest ground
+    stops, so journeys can transfer between the flight/ferry network and a
+    co-located rail/bus feed (train to the airport, then fly).
+
+    Merged feeds are otherwise disconnected -- a GTFS rail stop and an OpenFlights
+    airport never share an id even when physically adjacent -- so no intermodal
+    transfer is possible. Links go from each AIRPORT/FERRY_TERMINAL to its nearest
+    `max_links` non-hub stops within `max_walk_km` (both directions). Capping per
+    hub keeps the CSA footpath closure cheap and avoids wiring a dense urban feed
+    into itself. Mutates and returns `tt`.
+    """
+    from travelplanner.geo import haversine
+    hubs = [s for s in tt.stops.values() if s.type in _TRANSFER_HUB_TYPES]
+    others = [s for s in tt.stops.values() if s.type not in _TRANSFER_HUB_TYPES]
+    for hub in hubs:
+        near = []
+        for s in others:
+            km = haversine(hub.lat, hub.lon, s.lat, s.lon)
+            if 0 < km <= max_walk_km:
+                near.append((km, s))
+        near.sort(key=lambda x: x[0])
+        for km, s in near[:max_links]:
+            dur = timedelta(hours=km / walk_kmh)
+            tt.add_footpath(hub.id, s.id, dur)
+            tt.add_footpath(s.id, hub.id, dur)
+    return tt
+
+
 def fill_missing_tz(tt: Timetable) -> Timetable:
     """Give every tz-less stop the timezone of its nearest tz-bearing stop.
 

@@ -306,6 +306,30 @@ def test_foot_ready_arrival_survives_earlier_vehicle_arrival():
     assert j.legs[-1].trip_id == "T3"
 
 
+def test_link_transfer_hubs_enables_air_ground_chaining():
+    from travelplanner.graph.scheduled import link_transfer_hubs
+    from travelplanner.graph.schema import NodeType
+    tt = Timetable()
+    tt.add_stop(Stop("X", "Origin rail", 52.0, 4.5))
+    tt.add_stop(Stop("R", "Airport rail", 52.311, 4.762))        # ~0.15 km from AAA
+    tt.add_stop(Stop("AAA", "Airport", 52.310, 4.760, type=NodeType.AIRPORT))
+    tt.add_stop(Stop("BBB", "Dest airport", 48.0, 2.0, type=NodeType.AIRPORT))
+    tt.add_trip(make_trip("TR", Mode.TRAIN, [
+        ("X", "08:00", "08:00"), ("R", "09:00", "09:00")]))
+    tt.add_trip(make_trip("FL", Mode.FLIGHT, [
+        ("AAA", "10:00", "10:00"), ("BBB", "11:00", "11:00")]))
+    # Without a transfer footpath the rail stop and the airport are disconnected,
+    # so a train -> fly journey cannot be formed.
+    assert ConnectionScan(tt, horizon=timedelta(hours=6)).query(
+        {"X": dt(7, 0)}, "BBB") is None
+    link_transfer_hubs(tt)
+    j = ConnectionScan(tt, horizon=timedelta(hours=6)).query({"X": dt(7, 0)}, "BBB")
+    assert j is not None
+    modes = [leg.mode for leg in j.legs]
+    assert Mode.TRAIN in modes and Mode.WALK in modes and Mode.FLIGHT in modes
+    assert j.arrive == dt(11, 0)
+
+
 def test_merge_timetables_unions_and_is_first_wins():
     from travelplanner.graph.scheduled import merge_timetables
     a = Timetable()
