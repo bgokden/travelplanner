@@ -366,8 +366,7 @@ _UI_HTML = """<!doctype html><html><head><meta charset="utf-8">
   </div>
   <label>Options</label>
   <input id="top" type="number" min="1" max="9" value="3">
-  <label class="chk"><input type="checkbox" id="road"> real streets (car legs)</label>
-  <input id="region" placeholder="region for roads, e.g. switzerland" style="display:none">
+  <label class="chk"><input type="checkbox" id="road"> real streets (car legs, auto-downloads map data)</label>
   <button id="go">Plan trip</button>
   <button id="ex" class="alt">Load example</button>
   <div id="status"></div>
@@ -394,6 +393,7 @@ function debounce(fn, ms){ let t; return (...a)=>{clearTimeout(t);
   t=setTimeout(()=>fn(...a), ms);}; }
 function fmtDur(mins){ mins=Math.round(mins); const h=Math.floor(mins/60), m=mins%60;
   return h ? (m ? h+'h '+m+'m' : h+'h') : m+'m'; }
+const hhmm = s => s ? new Date(s).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : '';
 function fmtKm(km){ return km < 1 ? 'short walk' : km.toFixed(0)+' km'; }
 
 const SRC_LABEL = {city:'CITY', airport:'AIRPORT', station:'STATION',
@@ -409,9 +409,6 @@ function addRecent(s){
   catch(e){ /* private mode / quota: skip persisting */ }
 }
 
-$('road').addEventListener('change', () => {
-  $('region').style.display = $('road').checked ? 'block' : 'none';
-});
 
 // --- autocomplete ---------------------------------------------------------
 function attachAC(id){
@@ -509,10 +506,14 @@ function renderResults(data){
     const arr = new Date(opt.arrive_at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
     const modes = [...new Set(opt.legs.map(l => l.mode))].map(m =>
       '<span class="chip" style="background:'+(colors[m]||'#000')+'">'+m+'</span>').join('');
-    const legs = opt.legs.map(l =>
-      '<div class="leg"><span class="sw" style="background:'+(colors[l.mode]||'#000')+'"></span>'
-      + esc(l.mode)+': '+esc(l.from.name)+' &rarr; '+esc(l.to.name)
-      + ' ('+fmtKm(l.distance_km)+')</div>').join('');
+    const legs = opt.legs.map(l => {
+      const t = (l.depart_at && l.arrive_at)
+        ? hhmm(l.depart_at)+'&ndash;'+hhmm(l.arrive_at)+' ' : '';
+      const dur = l.travel_time_s != null ? ' &middot; '+fmtDur(l.travel_time_s/60) : '';
+      return '<div class="leg"><span class="sw" style="background:'+(colors[l.mode]||'#000')+'"></span>'
+        + t+esc(l.mode)+': '+esc(l.from.name)+' &rarr; '+esc(l.to.name)
+        + dur+' ('+fmtKm(l.distance_km)+')</div>';
+    }).join('');
     const fare = opt.fare_estimate != null
       ? ' &middot; ~'+Math.round(opt.fare_estimate)+' '+esc(opt.fare_currency) : '';
     div.innerHTML = '<div class="t">Option '+(i+1)+' &middot; '
@@ -531,10 +532,12 @@ async function plan(){
   if(!origin || !dest){ setStatus('Enter an origin and a destination.', true); return; }
   const p = new URLSearchParams({origin, dest, objective:$('objective').value,
     access:$('access').value, top:$('top').value, depart:$('depart').value});
-  if($('road').checked){ p.set('road','1');
-    if($('region').value.trim()) p.set('region', $('region').value.trim()); }
+  if($('road').checked) p.set('road','1');   // region auto-resolved from the coordinates
   const btn = $('go'), label = btn.textContent;
-  btn.disabled = true; btn.textContent = 'Planning...'; setStatus('Planning...');
+  btn.disabled = true; btn.textContent = 'Planning...';
+  setStatus($('road').checked
+    ? 'Planning... real streets downloads map data for new areas, so the first request for a region can take a minute.'
+    : 'Planning...');
   try {
     const r = await fetch('/api/plan?'+p.toString());
     const data = await r.json();
