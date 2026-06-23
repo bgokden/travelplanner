@@ -28,8 +28,11 @@ def _in_zone(when, tz_name):
 
 def _print_itinerary(it: Itinerary, indent: str = "    ") -> None:
     arrive = _in_zone(it.arrive_at, it.legs[-1].to_loc.tz if it.legs else None)
+    fare = (f"  ~{it.fare_estimate:.0f} {it.fare_currency}"
+            if it.fare_estimate is not None else "")
     print(f"{indent}{it.primary_mode.value:6} arrive {arrive:%Y-%m-%d %H:%M}"
-          f"  total {humanize_duration(it.total_duration)}  cost {it.cost_level.value}")
+          f"  total {humanize_duration(it.total_duration)}{fare}"
+          f"  cost {it.cost_level.value}")
     for leg in it.legs:
         # The Itinerary stamped each leg's absolute clock; render in local time.
         dep = _in_zone(leg.depart_at, leg.from_loc.tz)

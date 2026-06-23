@@ -130,6 +130,30 @@ def test_leg_geometry_in_to_dict():
     assert "geometry" not in walk.to_dict()
 
 
+def test_fare_estimate_in_to_dict_and_itinerary_sum():
+    legs = [
+        Leg(Mode.CAR, _loc("a", 0, 0), _loc("b", 0, 0), 10.0,
+            timedelta(minutes=12), timedelta(), CostLevel.MEDIUM,
+            fare_estimate=2.0, fare_currency="EUR"),
+        Leg(Mode.TRAIN, _loc("b", 0, 0), _loc("c", 1, 1), 100.0,
+            timedelta(hours=1), timedelta(), CostLevel.MEDIUM,
+            fare_estimate=17.5, fare_currency="EUR"),
+    ]
+    it = Itinerary(legs, datetime(2026, 7, 1, 9, 0), 1.0)
+    assert it.fare_estimate == 19.5 and it.fare_currency == "EUR"
+    d = it.to_dict()
+    assert d["fare_estimate"] == 19.5 and d["fare_currency"] == "EUR"
+    assert it.legs[0].to_dict()["fare_estimate"] == 2.0
+    assert it.legs[0].to_dict()["fare_currency"] == "EUR"
+
+
+def test_unpriced_itinerary_has_no_fare():
+    it = _itin()                          # hand-built legs, no fare stamped
+    assert it.fare_estimate is None and it.fare_currency is None
+    assert it.to_dict()["fare_estimate"] is None
+    assert "fare_estimate" not in it.legs[0].to_dict()
+
+
 def test_location_to_dict():
     assert _loc("X", 1.0, 2.0).to_dict() == {
         "name": "X", "type": "city", "lat": 1.0, "lon": 2.0}

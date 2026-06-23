@@ -126,6 +126,11 @@ class Leg:
     # the snapped road network, so its ends can differ from from_loc/to_loc by the
     # snap distance.
     geometry: tuple | None = None
+    # Rough representative cost of this leg in fare_currency, from the active fare
+    # model (None on a free-standing leg the planner did not price). An ESTIMATE for
+    # ranking and a ballpark, not a quoted fare -- see travelplanner.fares.
+    fare_estimate: float | None = None
+    fare_currency: str | None = None
 
     @property
     def duration(self) -> timedelta:
@@ -168,6 +173,9 @@ class Leg:
             out["arrive_at"] = _iso_seconds(self.arrive_at)
         if self.geometry is not None:
             out["geometry"] = [[lat, lon] for lat, lon in self.geometry]
+        if self.fare_estimate is not None:
+            out["fare_estimate"] = self.fare_estimate
+            out["fare_currency"] = self.fare_currency
         return out
 
 
@@ -223,6 +231,21 @@ class Itinerary:
         return CostLevel.from_rank(max(leg.cost_level.rank for leg in self.legs))
 
     @property
+    def fare_estimate(self) -> float | None:
+        """Rough total cost: sum of the legs' fare estimates, or None if unpriced.
+        An estimate for ranking/a ballpark, not a quoted fare (see fare_currency)."""
+        amounts = [leg.fare_estimate for leg in self.legs
+                   if leg.fare_estimate is not None]
+        return round(sum(amounts), 2) if amounts else None
+
+    @property
+    def fare_currency(self) -> str | None:
+        for leg in self.legs:
+            if leg.fare_currency is not None:
+                return leg.fare_currency
+        return None
+
+    @property
     def total_minutes(self) -> float:
         return self.total_duration.total_seconds() / 60.0
 
@@ -248,6 +271,8 @@ class Itinerary:
             "total_minutes": self.total_minutes,
             "total_distance_km": self.total_distance_km,
             "cost_level": self.cost_level.value,
+            "fare_estimate": self.fare_estimate,
+            "fare_currency": self.fare_currency,
             "num_transfers": self.num_transfers,
             "score": self.score,
             "feasible": self.feasible,

@@ -330,6 +330,27 @@ def test_plan_surfaces_routed_polyline_on_car_leg():
     assert car_legs[0].to_dict()["geometry"] == [[p[0], p[1]] for p in geom]
 
 
+def test_plan_prices_legs_with_active_fare_model():
+    # The always-on heuristic fare model stamps every planned leg; the itinerary
+    # total is the sum, in the model's currency. CAR is priced at 0.20 EUR/km.
+    b = RoadGraphBuilder()
+    b.add_node("a", 47.0, 7.0)
+    b.add_node("b", 47.0, 7.50)
+    b.add_road("a", "b", 600)
+    router = CCHRoadRouter(b.build())
+    tt = Timetable()
+    conn = CCHConnector(router, tt.stops)
+    origin = place("o", LocationType.HOTEL, 47.0, 7.0)
+    dest = place("d", LocationType.HOTEL, 47.0, 7.50)
+
+    it = plan(origin, dest, DEP, tt, conn)[0]
+    assert it.fare_currency == "EUR"
+    assert it.fare_estimate is not None and it.fare_estimate > 0
+    car = next(leg for leg in it.legs if leg.mode is Mode.CAR)
+    assert car.fare_estimate == round(0.20 * car.distance_km, 2)
+    assert abs(it.fare_estimate - car.fare_estimate) < 1e-9
+
+
 def test_cch_connector_same_node_uses_geometric_estimate():
     # Regression: two distinct points that snap to the same road node yielded a
     # 0 km / 0 s drive. Fall back to a geometric estimate instead.

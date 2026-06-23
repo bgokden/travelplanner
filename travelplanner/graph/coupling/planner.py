@@ -22,6 +22,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
+from travelplanner.fares import DEFAULT_CURRENCY, get_fare_model
 from travelplanner.geo import haversine
 from travelplanner.models import Itinerary, Leg, Location, LocationType, Mode
 from travelplanner.graph.coupling.connector import AccessLeg, RoadConnector
@@ -62,6 +63,8 @@ def _timed_to_legs(timed: list[tuple], depart_at: datetime) -> list[Leg]:
     overhead. geometry is the routed polyline for a road leg, else None."""
     legs: list[Leg] = []
     prev_arrival = depart_at
+    fare_model = get_fare_model()
+    currency = getattr(fare_model, "currency", DEFAULT_CURRENCY)
     for mode, from_loc, to_loc, dep, arr, dist_km, cost, geometry in timed:
         legs.append(Leg(
             mode=mode, from_loc=from_loc, to_loc=to_loc,
@@ -70,6 +73,8 @@ def _timed_to_legs(timed: list[tuple], depart_at: datetime) -> list[Leg]:
             overhead=max(timedelta(), dep - prev_arrival),
             cost_level=cost,
             geometry=geometry,
+            fare_estimate=round(fare_model(mode, dist_km), 2),
+            fare_currency=currency,
         ))
         prev_arrival = arr
     return legs
