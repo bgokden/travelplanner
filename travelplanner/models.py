@@ -42,6 +42,25 @@ class CostLevel(Enum):
 LINE_HAUL_MODES = frozenset({Mode.TRAIN, Mode.FERRY, Mode.FLIGHT})
 
 
+def humanize_duration(td: timedelta) -> str:
+    """A short human duration like "2h 9m" / "45m" / "1d 3h" (seconds dropped).
+
+    For route-card display: a raw timedelta prints as "2:09:26.112926", which is
+    not how a traveler reads a trip length.
+    """
+    minutes = max(0, int(td.total_seconds()) // 60)
+    hours, mins = divmod(minutes, 60)
+    days, hours = divmod(hours, 24)
+    parts = []
+    if days:
+        parts.append(f"{days}d")
+    if hours:
+        parts.append(f"{hours}h")
+    if mins or not parts:                  # always show something, even "0m"
+        parts.append(f"{mins}m")
+    return " ".join(parts)
+
+
 @dataclass(frozen=True)
 class Location:
     name: str
@@ -93,6 +112,7 @@ class Leg:
             "travel_time_s": self.travel_time.total_seconds(),
             "overhead_s": self.overhead.total_seconds(),
             "duration_s": self.duration.total_seconds(),
+            "duration_human": humanize_duration(self.duration),
             "cost_level": self.cost_level.value,
         }
 
@@ -143,6 +163,7 @@ class Itinerary:
             "depart_at": self.depart_at.isoformat(),
             "arrive_at": self.arrive_at.isoformat(),
             "total_duration_s": self.total_duration.total_seconds(),
+            "total_duration_human": humanize_duration(self.total_duration),
             "total_minutes": self.total_minutes,
             "total_distance_km": self.total_distance_km,
             "cost_level": self.cost_level.value,

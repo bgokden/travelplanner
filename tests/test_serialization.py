@@ -10,6 +10,7 @@ from travelplanner.models import (
     Location,
     LocationType,
     Mode,
+    humanize_duration,
     itinerary_records,
     leg_records,
 )
@@ -29,6 +30,21 @@ def _itin():
             12.0, timedelta(minutes=40), timedelta(minutes=10), CostLevel.HIGH),
     ]
     return Itinerary(legs, datetime(2026, 7, 1, 9, 0), score=1.0)
+
+
+def test_humanize_duration():
+    assert humanize_duration(timedelta(hours=2, minutes=9, seconds=26)) == "2h 9m"
+    assert humanize_duration(timedelta(minutes=45)) == "45m"
+    assert humanize_duration(timedelta()) == "0m"
+    assert humanize_duration(timedelta(seconds=30)) == "0m"    # sub-minute floors
+    assert humanize_duration(timedelta(hours=1)) == "1h"       # exact hour, no "0m"
+    assert humanize_duration(timedelta(days=1, hours=3, minutes=5)) == "1d 3h 5m"
+
+
+def test_to_dict_includes_human_durations():
+    it = _itin()                               # 6m + 4h20m + 50m = 5h 16m total
+    assert it.to_dict()["total_duration_human"] == "5h 16m"
+    assert it.legs[1].to_dict()["duration_human"] == "4h 20m"
 
 
 def test_location_to_dict():
