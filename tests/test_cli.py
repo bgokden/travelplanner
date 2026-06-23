@@ -39,9 +39,11 @@ def test_plan_with_timetable_artifact_offline(tmp_path, capsys):
     save_timetable(tt, path)
 
     rc = main(["plan", "52.30,4.76", "47.46,8.55", "--timetable", path,
-               "--at", "2026-07-01T07:00"])
+               "--at", "2026-07-01T07:00", "--top", "2"])
     out = capsys.readouterr().out
     assert rc == 0
     assert f"artifact {path}" in out            # header names the artifact source
     assert "flight" in out.lower()              # routed over the loaded flight
     assert "OpenFlights" in out                 # artifact embeds flight data: credited
+    assert "total 4h 30m" in out                # humanized, not "total 4:30:00"
+    assert ".000" not in out and "00:00.5" not in out   # no leaked microseconds

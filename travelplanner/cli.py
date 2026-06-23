@@ -13,7 +13,7 @@ downloaded and cached on first use); pass --gtfs to use a specific feed, or run
 import argparse
 from datetime import datetime
 
-from travelplanner.models import Itinerary, LocationType
+from travelplanner.models import Itinerary, LocationType, humanize_duration
 from travelplanner.graph.query import Objective
 
 
@@ -29,13 +29,11 @@ def _in_zone(when, tz_name):
 def _print_itinerary(it: Itinerary, indent: str = "    ") -> None:
     arrive = _in_zone(it.arrive_at, it.legs[-1].to_loc.tz if it.legs else None)
     print(f"{indent}{it.primary_mode.value:6} arrive {arrive:%Y-%m-%d %H:%M}"
-          f"  total {it.total_duration}  cost {it.cost_level.value}")
-    clock = it.depart_at
+          f"  total {humanize_duration(it.total_duration)}  cost {it.cost_level.value}")
     for leg in it.legs:
-        clock = clock + leg.overhead
-        dep = _in_zone(clock, leg.from_loc.tz)
-        clock = clock + leg.travel_time
-        arr = _in_zone(clock, leg.to_loc.tz)
+        # The Itinerary stamped each leg's absolute clock; render in local time.
+        dep = _in_zone(leg.depart_at, leg.from_loc.tz)
+        arr = _in_zone(leg.arrive_at, leg.to_loc.tz)
         wait = (f"  (+{int(leg.overhead.total_seconds() // 60)}m wait)"
                 if leg.overhead.total_seconds() else "")
         print(f"{indent}  {leg.mode.value:6} {leg.from_loc.name} -> "
@@ -100,7 +98,7 @@ def _cmd_plan(args) -> int:
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         results = plan_trip(origin, dest, at, tt,
-                            objective=Objective(args.objective))
+                            objective=Objective(args.objective), top_n=args.top)
     print(f"Plan: {origin.name} -> {dest.name}  departing {at:%Y-%m-%d %H:%M}"
           f"  [{args.objective}]  data: {source}\n")
     for w in caught:
@@ -297,6 +295,8 @@ def main(argv=None) -> int:
     p.add_argument("--at", help="departure time, ISO format (default: now)")
     p.add_argument("--objective", choices=[o.value for o in Objective],
                    default="fastest", help="ranking objective (default: fastest)")
+    p.add_argument("--top", type=int, default=3, metavar="N",
+                   help="number of ranked routes to show (default: 3)")
 
     tp = sub.add_parser("transit-prefetch",
                         help="download a trip's transit data (catalog + GTFS "
