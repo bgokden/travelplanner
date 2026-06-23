@@ -239,6 +239,13 @@ def plan_trip(origin, dest, depart_at: datetime | None = None,
     if timetable is None:
         import warnings
         from travelplanner.auto_timetable import build_default_timetable
+        # Heads-up before the (possibly slow) compose, so a cold first call does
+        # not look like a hang. warnings dedupes per location, so repeated calls
+        # in one process only see this once.
+        warnings.warn(
+            "plan_trip: auto-composing a timetable for this trip; the first run "
+            "downloads flight and transit data (cached afterwards), which can take "
+            "a few seconds", stacklevel=2)
         timetable, notes = build_default_timetable(o, d)
         for note in notes:
             warnings.warn(f"plan_trip: {note}", stacklevel=2)

@@ -95,6 +95,12 @@ def _cmd_plan(args) -> int:
         print(f"error: {exc}")
         return 2
 
+    if tt is None:
+        # Auto-compose downloads data on a cold cache; say so before the stall so
+        # it does not look like a hang (the captured warnings only print after).
+        import sys
+        print("composing a timetable for this trip "
+              "(first run downloads data, then cached)...", file=sys.stderr)
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         results = plan_trip(origin, dest, at, tt,

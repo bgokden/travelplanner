@@ -429,6 +429,19 @@ def test_plan_trip_without_timetable_autocomposes_and_routes(monkeypatch):
     assert any(leg.mode is Mode.FLIGHT for it in result for leg in it.legs)
 
 
+def test_plan_trip_warns_before_autocomposing(monkeypatch):
+    """A cold auto-compose announces itself up front, so it does not look like a
+    silent hang while it downloads."""
+    from travelplanner import auto_timetable
+    monkeypatch.setattr(auto_timetable, "airports_near",
+                        lambda pts, r, download: set())
+    monkeypatch.setattr(auto_timetable, "catalog", lambda: {})
+    origin = place("A", LocationType.CITY, 52.37, 4.90)
+    dest = place("B", LocationType.CITY, 52.09, 5.12)
+    with pytest.warns(UserWarning, match="auto-composing a timetable"):
+        plan_trip(origin, dest, datetime(2026, 7, 1, 9, 0))   # timetable=None
+
+
 def test_plan_trip_without_timetable_no_data_degrades(monkeypatch):
     """No air and no ground data: the public path does not crash -- it surfaces the
     coverage gaps as warnings and still returns the direct ground (drive) option."""
