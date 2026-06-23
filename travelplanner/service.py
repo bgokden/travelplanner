@@ -513,10 +513,12 @@ function renderResults(data){
       '<div class="leg"><span class="sw" style="background:'+(colors[l.mode]||'#000')+'"></span>'
       + esc(l.mode)+': '+esc(l.from.name)+' &rarr; '+esc(l.to.name)
       + ' ('+fmtKm(l.distance_km)+')</div>').join('');
+    const fare = opt.fare_estimate != null
+      ? ' &middot; ~'+Math.round(opt.fare_estimate)+' '+esc(opt.fare_currency) : '';
     div.innerHTML = '<div class="t">Option '+(i+1)+' &middot; '
       + fmtDur(opt.total_minutes)+'</div>'
       + '<div class="m">'+opt.num_transfers+' transfer(s) &middot; cost '+esc(opt.cost_level)
-      + ' &middot; arrive '+arr+'</div><div>'+modes+'</div>'+legs;
+      + fare + ' &middot; arrive '+arr+'</div><div>'+modes+'</div>'+legs;
     div.onclick = () => drawOption(data, i);
     box.appendChild(div);
   });
