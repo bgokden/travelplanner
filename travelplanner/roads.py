@@ -33,6 +33,7 @@ metric per (day, conditions), so sequential calls are fast.
 """
 
 import os
+import shutil
 import time
 import urllib.request
 import warnings
@@ -191,18 +192,65 @@ def prefetch(regions, *, build: bool = False) -> list[str]:
     return paths
 
 
+def _auto_artifact_dir(region: str) -> str:
+    """Per-region directory under the cache for a persisted built road artifact.
+
+    The online auto path (no explicit data_dir) otherwise re-parses the OSM extract
+    and recomputes the contraction order on every process; persisting the built
+    artifact here makes that a one-time cost -- later requests and restarts load it
+    in ~milliseconds. Keyed by the extract filename so each region is distinct.
+    """
+    src = resolve_region(region)
+    name = os.path.basename(src).replace(".osm.pbf", "") or "region"
+    return os.path.join(cache_dir(), "artifacts", name)
+
+
+def _persist_artifact(art_dir: str, graph, order, region: str) -> None:
+    """Write the built artifact atomically (temp dir, then swap in), best-effort.
+
+    A cache write must never corrupt the directory or fail the request: build into
+    a sibling .part dir and os.replace() it in, and warn (not raise) on any OS error.
+    """
+    from travelplanner.graph.road.store import save_road_artifact
+
+    tmp = art_dir + ".part"
+    try:
+        os.makedirs(os.path.dirname(art_dir), exist_ok=True)
+        if os.path.isdir(tmp):
+            shutil.rmtree(tmp)
+        save_road_artifact(graph, order, tmp)
+        if os.path.isdir(art_dir):
+            shutil.rmtree(art_dir)            # replace a stale-format artifact
+        os.replace(tmp, art_dir)
+    except OSError as exc:
+        warnings.warn(f"road cache: could not persist {region}: {exc}")
+
+
 @lru_cache(maxsize=4)
 def _road_router_cached(region: str, data_dir: str | None):
     from travelplanner.graph.road import CCHRoadRouter
+    from travelplanner.graph.road.store import load_road_artifact
 
     if data_dir is not None:
-        from travelplanner.graph.road.store import load_road_artifact
         graph, order = load_road_artifact(data_dir)
         return CCHRoadRouter(graph, order=order)
 
+    # Online auto path: load a previously-built artifact from the cache if present,
+    # else build from the OSM extract and persist it for next time.
+    art_dir = _auto_artifact_dir(region)
+    try:
+        graph, order = load_road_artifact(art_dir)
+        return CCHRoadRouter(graph, order=order)    # one-time build already cached
+    except FileNotFoundError:
+        pass                                        # not built yet -> build below
+    except ValueError as exc:
+        warnings.warn(f"road cache: rebuilding {region} ({exc})")  # stale format
+
     from travelplanner.graph.road.osm import load_road_graph
     graph = load_road_graph(download_region(region), store_names=False)
-    return CCHRoadRouter(graph)
+    router = CCHRoadRouter(graph)                   # computes the contraction order
+    _persist_artifact(art_dir, graph, router.order, region)
+    return router
 
 
 def road_router(region: str, data_dir: str | None = None):
