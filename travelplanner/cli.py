@@ -301,7 +301,8 @@ def main(argv=None) -> int:
     p.add_argument("--at", help="departure time, ISO format (default: now)")
     p.add_argument("--objective", choices=[o.value for o in Objective],
                    default="fastest", help="ranking objective (default: fastest)")
-    p.add_argument("--top", type=int, default=3, metavar="N",
+    p.add_argument("--top", "--top-n", type=int, default=3, metavar="N",
+                   dest="top",
                    help="number of ranked routes to show (default: 3)")
 
     tp = sub.add_parser("transit-prefetch",

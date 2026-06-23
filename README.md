@@ -71,7 +71,7 @@ from travelplanner import plan_trip, Objective, sample_timetable, sample_trip
 tt = sample_timetable()
 origin, dest, depart = sample_trip()
 
-for it in plan_trip(origin, dest, depart, tt):          # ranked, fastest first
+for it in plan_trip(origin, dest, depart, tt, objective=Objective.FASTEST):  # ranked; the default
     print(f"{it.primary_mode.value}  {it.total_duration_human}  "
           f"arrive {it.arrive_at:%H:%M}  ({it.cost_level.value})")
     for leg in it.legs:
