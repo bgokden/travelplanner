@@ -38,6 +38,25 @@ ORIGIN = place("near X", LocationType.HOTEL, 47.0, 7.005)
 DEST = place("near Y", LocationType.HOTEL, 45.0, 9.01)
 
 
+def _priced_itin(fare, minutes, band):
+    a = place("a", LocationType.CITY, 47.0, 7.0)
+    b = place("b", LocationType.CITY, 47.5, 7.5)
+    leg = Leg(Mode.CAR, a, b, 50.0, timedelta(minutes=minutes), timedelta(),
+              band, fare_estimate=fare, fare_currency="EUR")
+    return Itinerary([leg], DEP, 1.0)
+
+
+def test_cheapest_ranks_by_fare_not_just_band():
+    # Two MEDIUM-band itineraries with different fares: CHEAPEST orders by the
+    # continuous fare, so the cheaper-but-slower one leads. The old 3-level band
+    # tied them and fell back to time, which would have led with pricier-but-faster.
+    cheap = _priced_itin(fare=10.0, minutes=120, band=CostLevel.MEDIUM)
+    pricey = _priced_itin(fare=50.0, minutes=60, band=CostLevel.MEDIUM)
+    ordered = sorted([pricey, cheap], key=_order_key(Objective.CHEAPEST))
+    assert ordered[0] is cheap
+    assert cheap.cost_level is pricey.cost_level is CostLevel.MEDIUM   # same band
+
+
 def test_frontier_contains_both_flight_and_train():
     tt = _trade_off_timetable()
     conn = GeometricConnector(tt.stops)

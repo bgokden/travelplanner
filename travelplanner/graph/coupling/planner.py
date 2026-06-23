@@ -110,13 +110,24 @@ def _emissions(itin: Itinerary) -> float:
                for leg in itin.legs)
 
 
-def _metrics(itin: Itinerary) -> tuple[float, int, int, float, float]:
-    # (time, cost, transfers, car_km, emissions). car_km and emissions are ranking
-    # dimensions only for GREENEST, so they are frontier axes only for GREENEST
-    # (see _objective_axes): keeping them for every objective would let a car-free
-    # /low-emission option survive the frontier and surface a strictly slower-and-
-    # pricier trip under FASTEST/CHEAPEST.
-    return (itin.total_duration.total_seconds(), itin.cost_level.rank,
+def _fare(itin: Itinerary) -> float:
+    """Approximate total fare (active model's currency) used as the cost axis: the
+    sum of leg estimates. Falls back to the 3-level cost_level band when an
+    itinerary is unpriced, so a candidate is never dropped for lacking an estimate
+    and ranking still works if the fare model is disabled."""
+    fare = itin.fare_estimate
+    return fare if fare is not None else float(itin.cost_level.rank)
+
+
+def _metrics(itin: Itinerary) -> tuple[float, float, int, float, float]:
+    # (time, cost, transfers, car_km, emissions). cost is the approximate fare (a
+    # continuous amount, so CHEAPEST separates same-band options instead of tying on
+    # the 3-level band). car_km and emissions are ranking dimensions only for
+    # GREENEST, so they are frontier axes only for GREENEST (see _objective_axes):
+    # keeping them for every objective would let a car-free/low-emission option
+    # survive the frontier and surface a strictly slower-and-pricier trip under
+    # FASTEST/CHEAPEST.
+    return (itin.total_duration.total_seconds(), _fare(itin),
             _transfers(itin), _car_km(itin), _emissions(itin))
 
 
@@ -152,7 +163,7 @@ def _dedupe(cands: list[Itinerary]) -> list[Itinerary]:
     out: list[Itinerary] = []
     for c in cands:
         total, cost, transfers, car_km, emissions = _metrics(c)
-        sig = (round(total), cost, transfers, round(car_km, 3),
+        sig = (round(total), round(cost), transfers, round(car_km, 3),
                round(emissions, 1), tuple(leg.mode.value for leg in c.legs))
         if sig in seen:
             continue
