@@ -118,16 +118,40 @@ def airport_access():
     return tt, origin, dest, datetime(2026, 7, 1, 7, 30)
 
 
+def rush_hour_driving():
+    """The same drive at different departure times: with road=True the car legs are
+    time-of-day aware (a weekday rush hour is slower than the night).
+
+    A classified ("primary") road, so the speed model applies a congestion
+    multiplier keyed on the departure. Returns (timetable, connector, origin, dest).
+    """
+    from travelplanner.graph.road import CCHRoadRouter, RoadGraphBuilder
+    from travelplanner.graph.coupling import CCHConnector
+
+    rb = RoadGraphBuilder()
+    rb.add_node("a", 47.00, 8.00)
+    rb.add_node("b", 47.00, 8.40)                       # ~30 km east
+    rb.add_road("a", "b", 1200, highway="primary")
+    router = CCHRoadRouter(rb.build())
+    tt = Timetable()                                    # no stops: the drive is the trip
+    conn = CCHConnector(router, tt.stops)
+    origin = place("home", LocationType.HOTEL, 47.00, 8.00)
+    dest = place("office", LocationType.HOTEL, 47.00, 8.40)
+    return tt, conn, origin, dest
+
+
 def _show(title, results):
     print(f"\n{title}")
     if not results:
         print("  (no itinerary - the destination is unreachable)")
         return
     it = results[0]
-    print(f"  {it.primary_mode.value} | arrive {it.arrive_at:%H:%M} | "
-          f"cost {it.cost_level.value}")
+    fare = (f" | ~{it.fare_estimate:.0f} {it.fare_currency}"
+            if it.fare_estimate is not None else "")
+    print(f"  {it.primary_mode.value} | {it.total_duration_human} | "
+          f"arrive {it.arrive_at:%H:%M}{fare} | cost {it.cost_level.value}")
     for leg in it.legs:
-        print(f"    {leg.mode.value:6} {leg.from_loc.name} -> {leg.to_loc.name}")
+        print(f"    {leg.depart_at:%H:%M}-{leg.arrive_at:%H:%M}  {leg.describe()}")
 
 
 if __name__ == "__main__":
@@ -157,6 +181,12 @@ if __name__ == "__main__":
         it = plan_trip(origin, dest, depart, tt, access=access)[0]
         chain = " -> ".join(leg.mode.value for leg in it.legs)
         print(f"  access={access:8} {chain}, arrive {it.arrive_at:%H:%M}")
+
+    tt, conn, origin, dest = rush_hour_driving()
+    print("\nTime-of-day driving (road=True over a classified road):")
+    for label, hour in [("rush 08:00", 8), ("off-peak 13:00", 13), ("night 03:00", 3)]:
+        it = plan(origin, dest, datetime(2026, 7, 1, hour, 0), tt, conn)[0]
+        print(f"  depart {label:14} -> drive {it.total_duration_human}")
 
     # No timetable at all: plan_trip auto-composes one for the trip (flights +
     # GTFS by location). Unlike the scenarios above, this needs network on first
