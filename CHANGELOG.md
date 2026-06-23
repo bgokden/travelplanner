@@ -7,6 +7,18 @@ All notable changes to this project are documented here. The format is based on
 ## [Unreleased]
 
 ### Added
+- Time-of-day driving in door-to-door planning. `plan_trip(..., road=True)` now
+  threads the departure through the road speed model, so access/egress car legs
+  reflect weekday rush-hour and night congestion (average-congestion model by
+  default, free-flow opt-in) instead of a single average. The `RoadConnector`
+  `access`/`egress`/`direct` methods take a `depart_at` (the standalone `drive*`
+  APIs already did); egress references departure-time congestion, since its arrival
+  time is unknown when legs are priced up front. The connector now reuses the
+  router's customized-metric cache (keyed by day, conditions, model, and hour).
+- Routed driving geometry on the result. A road-backed car `Leg` carries
+  `geometry`, the routed polyline as `(lat, lon)` points along the real street
+  network, and `leg.to_dict()` emits it as `[[lat, lon], ...]`; walk, straight-line,
+  and transit legs leave it `None` (their path is just `from_loc -> to_loc`).
 - Route-card-friendly results. Each `Leg` now carries absolute `depart_at`/
   `arrive_at` (stamped from the itinerary's departure, local to each endpoint via
   its `tz`) and a `describe()` step summary ("Flight from Schiphol to Zurich

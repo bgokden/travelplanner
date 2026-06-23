@@ -88,9 +88,11 @@ card. The top line is `primary_mode`, `total_duration_human` ("2h 9m"),
 the planner has no fare model). Each `leg` carries absolute `depart_at`/`arrive_at`
 (local to its endpoints via `from_loc.tz`/`to_loc.tz`), a `describe()` step
 ("Flight from Schiphol to Zurich Airport"), and `from_loc`/`to_loc` with
-`lat`/`lon` (straight-line geometry; routed polylines are not on the result).
-`it.to_dict()`/`it.to_json()` give the same data JSON-safe, and
-`itinerary_records(results)` is a pandas-ready table.
+`lat`/`lon`. A road-backed car leg (`road=True`) also carries `geometry` -- the
+routed polyline as `(lat, lon)` points along the real street network; walk,
+straight-line, and transit legs leave it `None` (their path is just
+`from_loc -> to_loc`). `it.to_dict()`/`it.to_json()` give the same data JSON-safe,
+and `itinerary_records(results)` is a pandas-ready table.
 
 **Choosing how the first/last mile works:**
 
@@ -104,6 +106,12 @@ plan_trip(origin, dest, depart, tt, road=True, turn_aware=True)  # turn restrict
 # walk to the nearest stop and take the train to the airport instead of driving.
 plan_trip(origin, dest, depart, tt, access="transit")
 ```
+
+With `road=True`, driving times are **time-of-day aware**: the road metric is
+customized for the departure, so access/egress car legs slow down in the weekday
+rush hour and ease off at night (an average-congestion model is the default;
+free-flow is opt-in). The straight-line default uses a distance-banded speed
+estimate without time-of-day.
 
 `plan(origin, dest, depart, tt, connector, ...)` remains available as the
 lower-level call when you want to build and pass a specific `RoadConnector`
