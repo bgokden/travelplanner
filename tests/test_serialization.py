@@ -68,6 +68,17 @@ def test_leg_describe_and_summary():
     assert l1.to_dict()["summary"] == "Train from hbf to dest hbf"
 
 
+def test_to_dict_times_drop_microseconds():
+    # Summed float-second durations give spurious microseconds; clock strings must
+    # not carry them (a leaky "this is a float, not a time" footgun).
+    legs = [Leg(Mode.WALK, _loc("a", 0, 0), _loc("b", 0, 0), 0.4,
+                timedelta(seconds=273.5), timedelta(), CostLevel.LOW)]
+    d = Itinerary(legs, datetime(2026, 7, 1, 8, 0), 1.0).to_dict()
+    assert d["arrive_at"] == "2026-07-01T08:04:33"        # .5s dropped
+    assert d["legs"][0]["arrive_at"] == "2026-07-01T08:04:33"
+    assert "." not in d["arrive_at"]
+
+
 def test_freestanding_leg_has_no_stamped_times():
     leg = Leg(Mode.WALK, _loc("a", 0, 0), _loc("b", 0, 0), 0.1,
               timedelta(minutes=5), timedelta(), CostLevel.LOW)

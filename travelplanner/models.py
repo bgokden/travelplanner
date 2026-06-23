@@ -23,6 +23,13 @@ class Mode(Enum):
 
 
 class CostLevel(Enum):
+    """Relative trip-cost band, not a currency amount.
+
+    The planner has no price model; this is an ordinal signal for comparing
+    options within a result set (CHEAPEST ranks by it), like the $/$$/$$$ bands a
+    maps app shows when it has no fare -- not an absolute price across all trips.
+    """
+
     LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"
@@ -63,6 +70,12 @@ def humanize_duration(td: timedelta) -> str:
     if mins or not parts:                  # always show something, even "0m"
         parts.append(f"{mins}m")
     return " ".join(parts)
+
+
+def _iso_seconds(dt: datetime) -> str:
+    """ISO string at whole-second resolution. Summing per-leg float seconds yields
+    spurious microseconds (e.g. 10:09:26.112926); a clock time has none."""
+    return dt.replace(microsecond=0).isoformat()
 
 
 @dataclass(frozen=True)
@@ -135,9 +148,9 @@ class Leg:
             "cost_level": self.cost_level.value,
         }
         if self.depart_at is not None:
-            out["depart_at"] = self.depart_at.isoformat()
+            out["depart_at"] = _iso_seconds(self.depart_at)
         if self.arrive_at is not None:
-            out["arrive_at"] = self.arrive_at.isoformat()
+            out["arrive_at"] = _iso_seconds(self.arrive_at)
         return out
 
 
@@ -195,8 +208,8 @@ class Itinerary:
         """JSON-safe dict of the itinerary (enums -> value, datetimes -> ISO)."""
         out = {
             "primary_mode": self.primary_mode.value,
-            "depart_at": self.depart_at.isoformat(),
-            "arrive_at": self.arrive_at.isoformat(),
+            "depart_at": _iso_seconds(self.depart_at),
+            "arrive_at": _iso_seconds(self.arrive_at),
             "total_duration_s": self.total_duration.total_seconds(),
             "total_duration_human": humanize_duration(self.total_duration),
             "total_minutes": self.total_minutes,
@@ -206,7 +219,7 @@ class Itinerary:
             "score": self.score,
             "feasible": self.feasible,
             "slack_s": self.slack.total_seconds() if self.slack is not None else None,
-            "arrival_window_end": (self.arrival_window_end.isoformat()
+            "arrival_window_end": (_iso_seconds(self.arrival_window_end)
                                    if self.arrival_window_end is not None else None),
         }
         if with_legs:
