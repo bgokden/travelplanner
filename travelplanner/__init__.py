@@ -64,6 +64,14 @@ from travelplanner.geofabrik import (
     region_for,
     region_for_trip,
 )
+from travelplanner.fares import (
+    fare_currency,
+    free_model,
+    get_fare_model,
+    heuristic_fare_model,
+    reset_fare_model,
+    set_fare_model,
+)
 from travelplanner.speed import (
     average_model,
     free_flow_model,
@@ -133,6 +141,13 @@ __all__ = [
     "average_model",
     "time_of_day_model",
     "holiday_calendar",
+    # approximate fare models (distance-and-mode heuristic; estimate, not a quote)
+    "set_fare_model",
+    "get_fare_model",
+    "reset_fare_model",
+    "heuristic_fare_model",
+    "free_model",
+    "fare_currency",
 ]
 
 __version__ = "0.1.0"

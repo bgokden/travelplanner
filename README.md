@@ -84,8 +84,12 @@ to see the frontier reorder.
 
 **What you get back:** each result is an `Itinerary` that renders like a route
 card. The top line is `primary_mode`, `total_duration_human` ("2h 9m"),
-`arrive_at`, `num_transfers`, and `cost_level` (a relative low/medium/high band --
-the planner has no fare model). Each `leg` carries absolute `depart_at`/`arrive_at`
+`arrive_at`, `num_transfers`, `cost_level` (a relative low/medium/high band), and
+`fare_estimate`/`fare_currency` -- a rough representative cost from a
+distance-and-mode heuristic (an estimate for ranking and a ballpark, **not a quoted
+fare**: it ignores discounts, daily caps, transfer rules, and advance-purchase
+pricing; swap or disable it via `travelplanner.fares`). Each `leg` carries the same
+`fare_estimate` plus absolute `depart_at`/`arrive_at`
 (local to its endpoints via `from_loc.tz`/`to_loc.tz`), a `describe()` step
 ("Flight from Schiphol to Zurich Airport"), and `from_loc`/`to_loc` with
 `lat`/`lon`. A road-backed car leg (`road=True`) also carries `geometry` -- the

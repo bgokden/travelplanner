@@ -7,6 +7,15 @@ All notable changes to this project are documented here. The format is based on
 ## [Unreleased]
 
 ### Added
+- Approximate fare estimates. A pluggable, always-on fare model
+  (`travelplanner.fares`) prices each leg from a distance-and-mode heuristic, so
+  every `Itinerary`/`Leg` carries `fare_estimate`/`fare_currency` (in `to_dict()`
+  and on the CLI route card), and CHEAPEST ranks on the continuous amount instead
+  of the 3-level cost band -- separating same-band options (two flights, or a long
+  train vs a short drive) that previously tied. It is an estimate for ranking and a
+  ballpark, **not a quoted fare** (it ignores discounts, daily caps, transfer rules,
+  and advance-purchase pricing); swap a model or opt out with `set_fare_model` /
+  `free_model`. The `cost_level` band is unchanged (still mode-based, for display).
 - Time-of-day driving in door-to-door planning. `plan_trip(..., road=True)` now
   threads the departure through the road speed model, so access/egress car legs
   reflect weekday rush-hour and night congestion (average-congestion model by

@@ -23,11 +23,12 @@ class Mode(Enum):
 
 
 class CostLevel(Enum):
-    """Relative trip-cost band, not a currency amount.
+    """Relative trip-cost band (a coarse low/medium/high signal, not a currency).
 
-    The planner has no price model; this is an ordinal signal for comparing
-    options within a result set (CHEAPEST ranks by it), like the $/$$/$$$ bands a
-    maps app shows when it has no fare -- not an absolute price across all trips.
+    A compact $/$$/$$$-style band for display, currently assigned by mode (e.g.
+    flights HIGH). For a numeric amount and the cost axis CHEAPEST actually ranks
+    on, see `Itinerary.fare_estimate` and `travelplanner.fares` -- the band itself
+    is independent of that estimate.
     """
 
     LOW = "low"
