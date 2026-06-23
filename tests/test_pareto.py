@@ -3,6 +3,7 @@
 from datetime import datetime, timedelta
 
 from travelplanner import place
+from travelplanner.fares import heuristic_fare_model, reset_fare_model, set_fare_model
 from travelplanner.models import CostLevel, Itinerary, Leg, Location, LocationType, Mode
 from travelplanner.graph.schema import NodeType
 from travelplanner.graph.scheduled import Stop, Timetable, make_trip
@@ -55,6 +56,25 @@ def test_cheapest_ranks_by_fare_not_just_band():
     ordered = sorted([pricey, cheap], key=_order_key(Objective.CHEAPEST))
     assert ordered[0] is cheap
     assert cheap.cost_level is pricey.cost_level is CostLevel.MEDIUM   # same band
+
+
+def test_cheapest_follows_fare_not_band_end_to_end():
+    # Full plan() path: invert the usual price order with a custom model so the
+    # HIGH-band flight is the cheaper-by-fare option and the LOW-band train is
+    # pricier. CHEAPEST must lead with the flight -- a result the old band-based
+    # ranking could never give (it ordered the LOW band first).
+    tt = _trade_off_timetable()
+    conn = GeometricConnector(tt.stops)
+    set_fare_model(heuristic_fare_model(rates={
+        Mode.FLIGHT: (0.0, 0.01), Mode.TRAIN: (0.0, 1.00),
+        Mode.CAR: (0.0, 0.15), Mode.WALK: (0.0, 0.0)}))
+    try:
+        cheapest = plan(ORIGIN, DEST, DEP, tt, conn,
+                        objective=Objective.CHEAPEST, top_n=5)
+    finally:
+        reset_fare_model()
+    assert cheapest[0].primary_mode is Mode.FLIGHT          # cheaper by fare
+    assert cheapest[0].cost_level is CostLevel.HIGH         # despite the HIGH band
 
 
 def test_frontier_contains_both_flight_and_train():

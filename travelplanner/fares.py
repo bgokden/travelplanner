@@ -11,6 +11,12 @@ weekly caps, transfer rules, advance-purchase and yield pricing, peak/off-peak,
 and travel class -- do not quote it. It exists to give CHEAPEST a continuous number
 to order on (the alternative is the 3-level cost_level band) and to show a label.
 
+Because those are ignored, CHEAPEST can mis-order in known cases: it overestimates
+a multi-leg transit day (no caps or transfer discounts, so it sums independent
+legs) and overprices a short budget flight (the flight rate is a mid-market blend,
+not a Ryanair floor). Real per-feed fares (GTFS-Fares, a later phase) would fix
+these; until then treat the ordering as a strong hint, not gospel.
+
 The default is always on (like the per-km emissions factors used for GREENEST),
 so an itinerary always carries an estimate; swap in `free_model` to ignore cost, or
 any other FareModel (e.g. a data-backed backend) via set_fare_model.

@@ -163,7 +163,7 @@ def _dedupe(cands: list[Itinerary]) -> list[Itinerary]:
     out: list[Itinerary] = []
     for c in cands:
         total, cost, transfers, car_km, emissions = _metrics(c)
-        sig = (round(total), round(cost), transfers, round(car_km, 3),
+        sig = (round(total), round(cost, 2), transfers, round(car_km, 3),
                round(emissions, 1), tuple(leg.mode.value for leg in c.legs))
         if sig in seen:
             continue
