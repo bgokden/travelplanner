@@ -22,6 +22,21 @@ def test_plan_trip_geometric_default():
     assert all(isinstance(it, Itinerary) for it in result)
 
 
+def test_plan_trip_default_objective_is_fastest():
+    import inspect
+    # The neutral default is fastest (Google-Maps expectation), not air priority.
+    assert inspect.signature(plan_trip).parameters["objective"].default \
+        is Objective.FASTEST
+
+
+def test_plan_trip_minimal_call_omits_depart_and_objective():
+    # The two-location call works: depart_at defaults to now, objective to fastest.
+    origin, dest, _ = sample_trip()
+    tt = sample_timetable()
+    result = plan_trip(origin, dest, timetable=tt)
+    assert isinstance(result, list)
+
+
 def test_plan_trip_accepts_coord_forms():
     """Origin as a "lat,lon" string and dest as a (lat, lon) tuple both coerce."""
     _, _, depart = sample_trip()

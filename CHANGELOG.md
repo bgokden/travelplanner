@@ -202,6 +202,11 @@ All notable changes to this project are documented here. The format is based on
   and are now shared by the road and timetable artifacts.
 
 ### Changed
+- `plan_trip(origin, dest)` is now the minimal call: `depart_at` is optional
+  (defaults to now) and the default `objective` is `FASTEST` (was `AIR_PRIORITY`,
+  a surprising default for a neutral "best routes" call). Air priority is still
+  available via `objective=AIR_PRIORITY`; the CLI `plan --objective` default is
+  `fastest` too.
 - No more optional extras: the road engine (`routingkit-cch`, `osmium`) and the
   calendar package (`holidays`) are now core dependencies, so one install
   gets every feature and `pytest` runs the whole suite with nothing

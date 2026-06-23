@@ -282,7 +282,7 @@ def _cmd_regions(args) -> int:
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         prog="travelplanner",
-        description="Multimodal travel planning that prioritizes air travel.")
+        description="Multimodal, door-to-door travel planning.")
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("demo", help="run the bundled multimodal sample")
@@ -296,7 +296,7 @@ def main(argv=None) -> int:
                    "'transit-build'); loads offline, overrides --gtfs/auto")
     p.add_argument("--at", help="departure time, ISO format (default: now)")
     p.add_argument("--objective", choices=[o.value for o in Objective],
-                   default="air_priority", help="ranking objective")
+                   default="fastest", help="ranking objective (default: fastest)")
 
     tp = sub.add_parser("transit-prefetch",
                         help="download a trip's transit data (catalog + GTFS "

@@ -167,8 +167,9 @@ def _select_connectors(origin: Location, dest: Location, timetable: Timetable, *
     return [_mode_connector("car", timetable)]
 
 
-def plan_trip(origin, dest, depart_at: datetime, timetable: Timetable | None = None,
-              *, objective: Objective = Objective.AIR_PRIORITY, top_n: int = 3,
+def plan_trip(origin, dest, depart_at: datetime | None = None,
+              timetable: Timetable | None = None,
+              *, objective: Objective = Objective.FASTEST, top_n: int = 3,
               conditions: frozenset = frozenset(), geocoder=None,
               road: bool = False, turn_aware: bool = False,
               access: str = "car", egress: str | None = None,
@@ -176,9 +177,13 @@ def plan_trip(origin, dest, depart_at: datetime, timetable: Timetable | None = N
               connector: RoadConnector | None = None) -> list[Itinerary]:
     """Rank door-to-door multimodal itineraries between two locations.
 
+    The minimal call is `plan_trip(origin, dest)`: `depart_at` defaults to now and
+    `objective` to FASTEST, so two locations are enough to get ranked routes.
+
     origin/dest accept the same forms as `drive()`: a Location, a (lat, lon)
     tuple, a "lat,lon" string, or a place name (resolved via the active geocoder,
-    or a per-call `geocoder=`). `timetable` is a GTFS Timetable
+    or a per-call `geocoder=`). `depart_at` is a `datetime` (naive is read as local
+    at the origin); omit it to depart now. `timetable` is a GTFS Timetable
     (`load_timetable(feed_dir)` or `sample_timetable()`). If omitted, one is
     auto-composed for the trip: the OpenFlights flight network plus the GTFS
     feed(s) whose coverage area spans the route (Mobility Database catalog),
@@ -226,6 +231,8 @@ def plan_trip(origin, dest, depart_at: datetime, timetable: Timetable | None = N
     # access/egress, so road/access/egress are ignored -- see above).
     if connector is None:
         _validate_modes(access, egress, road, turn_aware)
+    if depart_at is None:
+        depart_at = datetime.now().replace(microsecond=0)
     o = _coerce(origin, geocoder=geocoder)
     d = _coerce(dest, geocoder=geocoder)
 
