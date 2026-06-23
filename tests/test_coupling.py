@@ -303,6 +303,33 @@ def test_cch_connector_drive_time_responds_to_departure_time():
     assert peak.distance_km == night.distance_km == avg.distance_km
 
 
+def test_plan_surfaces_routed_polyline_on_car_leg():
+    # Change B: a road-routed CAR leg carries the routed polyline end to end and
+    # to_dict emits it. The path runs a -> c -> b (no direct a-b edge), so the
+    # geometry has the intermediate node, not just the two endpoints.
+    b = RoadGraphBuilder()
+    b.add_node("a", 47.0, 7.0)
+    b.add_node("c", 47.0, 7.25)
+    b.add_node("b", 47.0, 7.50)
+    b.add_road("a", "c", 300)
+    b.add_road("c", "b", 300)
+    router = CCHRoadRouter(b.build())
+    tt = Timetable()                              # no stops -> the ground leg wins
+    conn = CCHConnector(router, tt.stops)
+    origin = place("o", LocationType.HOTEL, 47.0, 7.0)
+    dest = place("d", LocationType.HOTEL, 47.0, 7.50)
+
+    results = plan(origin, dest, DEP, tt, conn)
+    car_legs = [leg for it in results for leg in it.legs if leg.mode is Mode.CAR]
+    assert car_legs
+    geom = car_legs[0].geometry
+    assert geom is not None and len(geom) == 3            # a -> c -> b
+    assert abs(geom[0][1] - 7.0) < 1e-4                   # starts at origin node
+    assert abs(geom[1][1] - 7.25) < 1e-4                  # through the interior node
+    assert abs(geom[-1][1] - 7.50) < 1e-4                 # ends at the dest node
+    assert car_legs[0].to_dict()["geometry"] == [[p[0], p[1]] for p in geom]
+
+
 def test_cch_connector_same_node_uses_geometric_estimate():
     # Regression: two distinct points that snap to the same road node yielded a
     # 0 km / 0 s drive. Fall back to a geometric estimate instead.

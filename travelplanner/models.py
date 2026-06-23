@@ -120,6 +120,12 @@ class Leg:
     # each in its endpoint's local zone (from_loc.tz / to_loc.tz).
     depart_at: datetime | None = None
     arrive_at: datetime | None = None
+    # Routed path as ((lat, lon), ...) when a real road route produced one (a
+    # road-backed CAR leg); None otherwise -- a walk, a straight-line estimate, or a
+    # transit leg, where the path is just from_loc -> to_loc. The polyline follows
+    # the snapped road network, so its ends can differ from from_loc/to_loc by the
+    # snap distance.
+    geometry: tuple | None = None
 
     @property
     def duration(self) -> timedelta:
@@ -160,6 +166,8 @@ class Leg:
             out["depart_at"] = _iso_seconds(self.depart_at)
         if self.arrive_at is not None:
             out["arrive_at"] = _iso_seconds(self.arrive_at)
+        if self.geometry is not None:
+            out["geometry"] = [[lat, lon] for lat, lon in self.geometry]
         return out
 
 

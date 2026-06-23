@@ -117,6 +117,19 @@ def test_stamping_is_copy_on_stamp_and_idempotent():
     assert shifted.legs[1].arrive_at == datetime(2026, 7, 1, 11, 15)  # +5m +10m +1h
 
 
+def test_leg_geometry_in_to_dict():
+    # A road-routed leg carries a polyline; to_dict emits it as [[lat, lon], ...].
+    pts = ((47.0, 7.0), (47.0, 7.25), (47.0, 7.5))
+    leg = Leg(Mode.CAR, _loc("a", 47.0, 7.0), _loc("b", 47.0, 7.5), 38.0,
+              timedelta(minutes=30), timedelta(), CostLevel.MEDIUM, geometry=pts)
+    assert leg.to_dict()["geometry"] == [[47.0, 7.0], [47.0, 7.25], [47.0, 7.5]]
+    # A leg with no routed path (walk/straight-line/transit) omits geometry.
+    walk = Leg(Mode.WALK, _loc("a", 0, 0), _loc("b", 0, 0), 0.1,
+               timedelta(minutes=5), timedelta(), CostLevel.LOW)
+    assert walk.geometry is None
+    assert "geometry" not in walk.to_dict()
+
+
 def test_location_to_dict():
     assert _loc("X", 1.0, 2.0).to_dict() == {
         "name": "X", "type": "city", "lat": 1.0, "lon": 2.0}

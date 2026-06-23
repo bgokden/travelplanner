@@ -25,6 +25,9 @@ class AccessLeg:
     seconds: float
     distance_km: float
     cost_level: CostLevel
+    # Routed network path as ((lat, lon), ...), set only for a road-routed CAR leg.
+    # None for a walk, a straight-line/geometric estimate, or a same-node fallback.
+    geometry: tuple | None = None
 
 
 class RoadConnector(Protocol):
@@ -240,15 +243,23 @@ class CCHConnector:
                              g.latitude[idx[i + 1]], g.longitude[idx[i + 1]])
                    for i in range(len(idx) - 1))
 
+    def _path_coords(self, path) -> tuple:
+        # The routed polyline as ((lat, lon), ...) over the snapped network nodes
+        # (float, not float32, for clean JSON). The endpoints are the snapped road
+        # nodes, which can differ from the exact door/stop by the snap distance.
+        g = self.router.graph
+        return tuple((float(g.latitude[i]), float(g.longitude[i]))
+                     for i in path.node_indices)
+
     def _drive(self, from_node: str, to_node: str, conditions, day,
                depart_at: datetime | None = None):
-        """(seconds, routed_km) for a road leg, or None if unreachable."""
+        """(seconds, routed_km, geometry) for a road leg, or None if unreachable."""
         if from_node == to_node:
-            return (0.0, 0.0)
+            return (0.0, 0.0, None)
         path = self._road(conditions, day, depart_at).route(from_node, to_node)
         if path is None:
             return None
-        return (float(path.seconds), self._path_km(path))
+        return (float(path.seconds), self._path_km(path), self._path_coords(path))
 
     def _coarse_leg(self, d_km: float) -> AccessLeg:
         # Two distinct points snapped to the SAME road node: the graph is too coarse
@@ -279,8 +290,9 @@ class CCHConnector:
             drive = self._drive(a, b, conditions, day, depart_at)
             if drive is None:
                 continue
-            secs, dist_km = drive
-            out[sid] = AccessLeg(Mode.CAR, secs, dist_km, CostLevel.MEDIUM)
+            secs, dist_km, geom = drive
+            out[sid] = AccessLeg(Mode.CAR, secs, dist_km, CostLevel.MEDIUM,
+                                 geometry=geom)
         return out
 
     def access(self, origin: Location,
@@ -312,5 +324,5 @@ class CCHConnector:
         drive = self._drive(o, d, conditions, day, depart_at)
         if drive is None:
             return None
-        secs, dist_km = drive
-        return AccessLeg(Mode.CAR, secs, dist_km, CostLevel.MEDIUM)
+        secs, dist_km, geom = drive
+        return AccessLeg(Mode.CAR, secs, dist_km, CostLevel.MEDIUM, geometry=geom)

@@ -58,16 +58,18 @@ def _stop_location(stop: Stop) -> Location:
 
 def _timed_to_legs(timed: list[tuple], depart_at: datetime) -> list[Leg]:
     """Convert (mode, from_loc, to_loc, departure, arrival, distance_km,
-    cost_level) tuples into v1 Legs, folding inter-leg waits into overhead."""
+    cost_level, geometry) tuples into v1 Legs, folding inter-leg waits into
+    overhead. geometry is the routed polyline for a road leg, else None."""
     legs: list[Leg] = []
     prev_arrival = depart_at
-    for mode, from_loc, to_loc, dep, arr, dist_km, cost in timed:
+    for mode, from_loc, to_loc, dep, arr, dist_km, cost, geometry in timed:
         legs.append(Leg(
             mode=mode, from_loc=from_loc, to_loc=to_loc,
             distance_km=dist_km,
             travel_time=arr - dep,
             overhead=max(timedelta(), dep - prev_arrival),
             cost_level=cost,
+            geometry=geometry,
         ))
         prev_arrival = arr
     return legs
@@ -188,7 +190,8 @@ def _ground_itinerary(origin: Location, dest: Location, depart_at: datetime,
                       leg: AccessLeg) -> Itinerary:
     arr = depart_at + timedelta(seconds=leg.seconds)
     legs = _timed_to_legs(
-        [(leg.mode, origin, dest, depart_at, arr, leg.distance_km, leg.cost_level)],
+        [(leg.mode, origin, dest, depart_at, arr, leg.distance_km, leg.cost_level,
+          leg.geometry)],
         depart_at)
     return Itinerary(legs=legs, depart_at=depart_at, score=0.0)
 
@@ -210,19 +213,20 @@ def _transit_itinerary(origin: Location, dest: Location, depart_at: datetime,
 
     timed.append((a.mode, origin, board_loc, depart_at,
                   depart_at + timedelta(seconds=a.seconds), a.distance_km,
-                  a.cost_level))
+                  a.cost_level, a.geometry))
 
     for jl in journey.legs:
         from_loc = _stop_location(timetable.stops[jl.from_stop])
         to_loc = _stop_location(timetable.stops[jl.to_stop])
         dist = haversine(from_loc.lat, from_loc.lon, to_loc.lat, to_loc.lon)
         timed.append((jl.mode, from_loc, to_loc, jl.departure, jl.arrival,
-                      dist, jl.cost_level))
+                      dist, jl.cost_level, None))   # transit leg: no road polyline
 
     egress_loc = _stop_location(timetable.stops[egress_stop])
     timed.append((egress_leg.mode, egress_loc, dest, journey.arrive,
                   journey.arrive + timedelta(seconds=egress_leg.seconds),
-                  egress_leg.distance_km, egress_leg.cost_level))
+                  egress_leg.distance_km, egress_leg.cost_level,
+                  egress_leg.geometry))
 
     return Itinerary(legs=_timed_to_legs(timed, depart_at),
                      depart_at=depart_at, score=0.0)
