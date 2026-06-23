@@ -97,6 +97,12 @@ class Leg:
     travel_time: timedelta
     overhead: timedelta
     cost_level: CostLevel
+    # Absolute clock times for this leg, stamped by the owning Itinerary (None for
+    # a free-standing leg). depart_at is when the leg's vehicle/walk leaves (after
+    # any wait counted in overhead); arrive_at is when it reaches to_loc. Render
+    # each in its endpoint's local zone (from_loc.tz / to_loc.tz).
+    depart_at: datetime | None = None
+    arrive_at: datetime | None = None
 
     @property
     def duration(self) -> timedelta:
@@ -104,7 +110,7 @@ class Leg:
 
     def to_dict(self) -> dict:
         """JSON-safe dict (enums -> value, durations -> seconds)."""
-        return {
+        out = {
             "mode": self.mode.value,
             "from": self.from_loc.to_dict(),
             "to": self.to_loc.to_dict(),
@@ -115,6 +121,11 @@ class Leg:
             "duration_human": humanize_duration(self.duration),
             "cost_level": self.cost_level.value,
         }
+        if self.depart_at is not None:
+            out["depart_at"] = self.depart_at.isoformat()
+        if self.arrive_at is not None:
+            out["arrive_at"] = self.arrive_at.isoformat()
+        return out
 
 
 @dataclass
@@ -125,6 +136,17 @@ class Itinerary:
     feasible: bool = True
     slack: timedelta | None = None
     arrival_window_end: datetime | None = None
+
+    def __post_init__(self) -> None:
+        # Stamp each leg's absolute clock times from the departure, so a consumer
+        # can show "09:00 -> 10:30" per step without re-deriving the running clock.
+        # overhead is the wait before the leg; travel_time is the move itself.
+        clock = self.depart_at
+        for leg in self.legs:
+            clock = clock + leg.overhead
+            leg.depart_at = clock
+            clock = clock + leg.travel_time
+            leg.arrive_at = clock
 
     @property
     def total_duration(self) -> timedelta:

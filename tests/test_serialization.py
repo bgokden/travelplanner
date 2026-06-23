@@ -47,6 +47,26 @@ def test_to_dict_includes_human_durations():
     assert it.legs[1].to_dict()["duration_human"] == "4h 20m"
 
 
+def test_legs_get_stamped_absolute_times():
+    it = _itin()                               # depart 09:00
+    l0, l1, l2 = it.legs
+    assert l0.depart_at == datetime(2026, 7, 1, 9, 0)      # walk, no wait
+    assert l0.arrive_at == datetime(2026, 7, 1, 9, 6)
+    assert l1.depart_at == datetime(2026, 7, 1, 9, 26)     # 20m wait, then 4h
+    assert l1.arrive_at == datetime(2026, 7, 1, 13, 26)
+    assert l2.arrive_at == it.arrive_at                    # last arrival == trip arrival
+    d = l1.to_dict()
+    assert d["depart_at"] == "2026-07-01T09:26:00"
+    assert d["arrive_at"] == "2026-07-01T13:26:00"
+
+
+def test_freestanding_leg_has_no_stamped_times():
+    leg = Leg(Mode.WALK, _loc("a", 0, 0), _loc("b", 0, 0), 0.1,
+              timedelta(minutes=5), timedelta(), CostLevel.LOW)
+    assert leg.depart_at is None and leg.arrive_at is None
+    assert "depart_at" not in leg.to_dict()
+
+
 def test_location_to_dict():
     assert _loc("X", 1.0, 2.0).to_dict() == {
         "name": "X", "type": "city", "lat": 1.0, "lon": 2.0}
