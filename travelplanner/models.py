@@ -41,6 +41,10 @@ class CostLevel(Enum):
 # do not count as transfers.
 LINE_HAUL_MODES = frozenset({Mode.TRAIN, Mode.FERRY, Mode.FLIGHT})
 
+# How each mode reads as a route-card step verb.
+_MODE_VERB = {Mode.WALK: "Walk", Mode.CAR: "Drive", Mode.TRAIN: "Train",
+              Mode.FERRY: "Ferry", Mode.FLIGHT: "Flight"}
+
 
 def humanize_duration(td: timedelta) -> str:
     """A short human duration like "2h 9m" / "45m" / "1d 3h" (seconds dropped).
@@ -108,10 +112,19 @@ class Leg:
     def duration(self) -> timedelta:
         return self.travel_time + self.overhead
 
+    def describe(self) -> str:
+        """A one-line route-card step, e.g. "Walk to Schiphol" or "Flight from
+        Schiphol to Zurich Airport" (line-haul names both ends)."""
+        verb = _MODE_VERB.get(self.mode, self.mode.value.title())
+        if self.mode in LINE_HAUL_MODES:
+            return f"{verb} from {self.from_loc.name} to {self.to_loc.name}"
+        return f"{verb} to {self.to_loc.name}"
+
     def to_dict(self) -> dict:
         """JSON-safe dict (enums -> value, durations -> seconds)."""
         out = {
             "mode": self.mode.value,
+            "summary": self.describe(),
             "from": self.from_loc.to_dict(),
             "to": self.to_loc.to_dict(),
             "distance_km": self.distance_km,

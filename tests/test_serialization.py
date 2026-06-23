@@ -60,6 +60,14 @@ def test_legs_get_stamped_absolute_times():
     assert d["arrive_at"] == "2026-07-01T13:26:00"
 
 
+def test_leg_describe_and_summary():
+    l0, l1, l2 = _itin().legs
+    assert l0.describe() == "Walk to hbf"                  # ground: names the dest
+    assert l1.describe() == "Train from hbf to dest hbf"   # line-haul: names both ends
+    assert l2.describe() == "Ferry from dest hbf to island"
+    assert l1.to_dict()["summary"] == "Train from hbf to dest hbf"
+
+
 def test_freestanding_leg_has_no_stamped_times():
     leg = Leg(Mode.WALK, _loc("a", 0, 0), _loc("b", 0, 0), 0.1,
               timedelta(minutes=5), timedelta(), CostLevel.LOW)
