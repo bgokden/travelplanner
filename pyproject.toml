@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "travelplanner"
 version = "0.1.0"
-description = "Multimodal door-to-door travel planning that prioritizes air travel"
+description = "Multimodal door-to-door travel planning across walk, drive, rail, ferry, and flight"
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [{ name = "Berk Gokden", email = "berkgokden@gmail.com" }]

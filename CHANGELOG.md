@@ -215,7 +215,8 @@ All notable changes to this project are documented here. The format is based on
   (defaults to now) and the default `objective` is `FASTEST` (was `AIR_PRIORITY`,
   a surprising default for a neutral "best routes" call). Air priority is still
   available via `objective=AIR_PRIORITY`; the CLI `plan --objective` default is
-  `fastest` too.
+  `fastest` too, and the lower-level `plan()`, `plan_multi()`, and `TravelQuery`
+  now default to `FASTEST` as well so every entry point agrees.
 - No more optional extras: the road engine (`routingkit-cch`, `osmium`) and the
   calendar package (`holidays`) are now core dependencies, so one install
   gets every feature and `pytest` runs the whole suite with nothing

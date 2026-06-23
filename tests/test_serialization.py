@@ -1,6 +1,7 @@
 """to_dict/to_json on result objects + tabular record helpers."""
 
 import json
+from dataclasses import replace
 from datetime import datetime, timedelta
 
 from travelplanner.models import (
@@ -90,6 +91,30 @@ def test_freestanding_leg_has_no_stamped_times():
               timedelta(minutes=5), timedelta(), CostLevel.LOW)
     assert leg.depart_at is None and leg.arrive_at is None
     assert "depart_at" not in leg.to_dict()
+
+
+def test_stamping_is_copy_on_stamp_and_idempotent():
+    # Itineraries stamp COPIES, never the caller's Leg objects, and restamp purely
+    # from depart_at -- so reconstructing or dataclasses.replace()-ing an itinerary
+    # cannot layer stale clock times onto fresh ones.
+    legs = [
+        Leg(Mode.WALK, _loc("a", 0, 0), _loc("b", 0, 0), 0.4,
+            timedelta(minutes=5), timedelta(), CostLevel.LOW),
+        Leg(Mode.TRAIN, _loc("b", 0, 0), _loc("c", 1, 1), 100.0,
+            timedelta(hours=1), timedelta(minutes=10), CostLevel.MEDIUM),
+    ]
+    it = Itinerary(legs, datetime(2026, 7, 1, 9, 0), 1.0)
+    # The caller's own legs are left untouched (no aliasing surprise).
+    assert legs[0].depart_at is None and legs[0].arrive_at is None
+    assert it.legs[0].depart_at == datetime(2026, 7, 1, 9, 0)
+    # Restamping already-stamped legs yields the same times (pure in depart_at).
+    again = Itinerary(it.legs, datetime(2026, 7, 1, 9, 0), 1.0)
+    assert [leg.depart_at for leg in again.legs] == [leg.depart_at for leg in it.legs]
+    assert [leg.arrive_at for leg in again.legs] == [leg.arrive_at for leg in it.legs]
+    # replace() with a new departure restamps from it, not layered on prior stamps.
+    shifted = replace(it, depart_at=datetime(2026, 7, 1, 10, 0))
+    assert shifted.legs[0].depart_at == datetime(2026, 7, 1, 10, 0)
+    assert shifted.legs[1].arrive_at == datetime(2026, 7, 1, 11, 15)  # +5m +10m +1h
 
 
 def test_location_to_dict():

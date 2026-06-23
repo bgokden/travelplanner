@@ -13,7 +13,7 @@ DEST = place("Airport B", LocationType.AIRPORT, 35.0, 139.0)
 def test_query_defaults():
     q = TravelQuery(origin=ORIGIN, dest=DEST,
                     depart_after=datetime(2026, 7, 1, 8, 0))
-    assert q.objective is Objective.AIR_PRIORITY
+    assert q.objective is Objective.FASTEST
     assert q.arrive_before is None
     assert q.conditions == frozenset()
     assert q.top_n == 3

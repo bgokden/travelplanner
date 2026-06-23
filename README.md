@@ -36,14 +36,19 @@ uv run travelplanner demo      # verify the install
 uv run pytest                  # run the test suite
 ```
 
-Requires Python 3.10+. Everything is included -- there are no optional extras.
-One environment gets the scheduled engine, the road engine (CCH over
-OpenStreetMap), the geometric connector, and calendar-aware speed models, so
-every feature works out of the box and nothing has to be enabled separately.
+**Requirements:**
 
-> Note: the road engine pulls `routingkit-cch` and `osmium`, which build from
-> source, so installing needs a C++17 compiler with OpenMP (standard on Linux/CI;
-> on a minimal machine install build tools first).
+- **Python 3.10+**.
+- **A C++17 compiler with OpenMP** (GCC or Clang). Two core dependencies,
+  `routingkit-cch` and `osmium`, build from source during install, so the toolchain
+  is needed for *every* install -- not only when you use the road engine. It is
+  standard on Linux and CI; on a minimal machine install build tools first (e.g.
+  `build-essential` on Debian/Ubuntu, `xcode-select --install` on macOS).
+
+Everything else is included -- there are no optional extras. One environment gets
+the scheduled engine, the road engine (CCH over OpenStreetMap), the geometric
+connector, and calendar-aware speed models, so every feature works out of the box
+and nothing has to be enabled separately.
 
 ## Quick start
 

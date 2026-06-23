@@ -26,7 +26,7 @@ class TravelQuery:
     depart_after: datetime
     arrive_before: datetime | None = None
     conditions: frozenset[str] = field(default_factory=frozenset)
-    objective: Objective = Objective.AIR_PRIORITY
+    objective: Objective = Objective.FASTEST
     top_n: int = 3
 
     def __post_init__(self) -> None:

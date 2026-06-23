@@ -1,7 +1,7 @@
 """Core data types for the travel planner."""
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from enum import Enum
 
@@ -138,7 +138,12 @@ class Leg:
         return f"{verb} to {self.to_loc.name}"
 
     def to_dict(self) -> dict:
-        """JSON-safe dict (enums -> value, durations -> seconds)."""
+        """JSON-safe dict (enums -> value, durations -> seconds).
+
+        depart_at/arrive_at are floored to whole seconds, while the *_s durations
+        keep fractional seconds, so differencing the two clocks can disagree with
+        duration_s by under a second.
+        """
         out = {
             "mode": self.mode.value,
             "summary": self.describe(),
@@ -171,12 +176,19 @@ class Itinerary:
         # Stamp each leg's absolute clock times from the departure, so a consumer
         # can show "09:00 -> 10:30" per step without re-deriving the running clock.
         # overhead is the wait before the leg; travel_time is the move itself.
+        # Copy-on-stamp (dataclasses.replace) rather than mutating the legs in
+        # place: the caller's Leg objects may be shared/aliased, and rebuilding the
+        # list keeps stamping idempotent (re-constructing an Itinerary, or copying
+        # one with replace(), restamps cleanly instead of layering on prior times).
+        # Assumes monotonic input (overhead >= 0); the planner clamps negatives.
         clock = self.depart_at
+        stamped = []
         for leg in self.legs:
             clock = clock + leg.overhead
-            leg.depart_at = clock
+            depart = clock
             clock = clock + leg.travel_time
-            leg.arrive_at = clock
+            stamped.append(replace(leg, depart_at=depart, arrive_at=clock))
+        self.legs = stamped
 
     @property
     def total_duration(self) -> timedelta:
@@ -213,7 +225,12 @@ class Itinerary:
         return max(0, line_haul - 1)
 
     def to_dict(self, *, with_legs: bool = True) -> dict:
-        """JSON-safe dict of the itinerary (enums -> value, datetimes -> ISO)."""
+        """JSON-safe dict of the itinerary (enums -> value, datetimes -> ISO).
+
+        Clock fields (depart_at/arrive_at) are floored to whole seconds, while the
+        *_s/*_minutes fields keep fractional seconds; differencing the clocks can
+        therefore disagree with the duration totals by under a second.
+        """
         out = {
             "primary_mode": self.primary_mode.value,
             "depart_at": _iso_seconds(self.depart_at),

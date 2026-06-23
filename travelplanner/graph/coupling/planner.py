@@ -334,7 +334,7 @@ def _rank(candidates: list[Itinerary], objective: Objective,
 def plan(origin: Location, dest: Location, depart_at: datetime,
          timetable: Timetable, connector: RoadConnector, *,
          conditions: frozenset[str] = frozenset(),
-         objective: Objective = Objective.AIR_PRIORITY,
+         objective: Objective = Objective.FASTEST,
          top_n: int = 3,
          horizon: timedelta = timedelta(days=2)) -> list[Itinerary]:
     """Rank Pareto-optimal door-to-door itineraries for the given objective.
@@ -360,7 +360,7 @@ def plan(origin: Location, dest: Location, depart_at: datetime,
 def plan_multi(origin: Location, dest: Location, depart_at: datetime,
                timetable: Timetable, connectors, *,
                conditions: frozenset[str] = frozenset(),
-               objective: Objective = Objective.AIR_PRIORITY,
+               objective: Objective = Objective.FASTEST,
                top_n: int = 3,
                horizon: timedelta = timedelta(days=2)) -> list[Itinerary]:
     """Like plan(), but pools candidates from SEVERAL connectors before the
