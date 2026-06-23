@@ -48,6 +48,7 @@ from travelplanner.roads import (
     DriveResult,
     REGIONS,
     build_region,
+    continent_road,
     download_region,
     Route,
     drive,
@@ -56,6 +57,7 @@ from travelplanner.roads import (
     prefetch,
     region_connector,
     road_router,
+    set_continent_road,
 )
 from travelplanner.geofabrik import (
     Region,
@@ -122,6 +124,8 @@ __all__ = [
     "build_region",
     "download_region",
     "prefetch",
+    "set_continent_road",
+    "continent_road",
     "REGIONS",
     # region catalog (Geofabrik)
     "list_regions",

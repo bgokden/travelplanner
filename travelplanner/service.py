@@ -20,6 +20,7 @@ the demo runs offline with no downloads. Pass a `region` (per request or via
 
 import argparse
 import json
+import os
 import time
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -34,7 +35,7 @@ from travelplanner.graph.query import Objective
 from travelplanner.graph.schema import NodeType
 from travelplanner.openflights import (load_airports, load_flight_network,
                                        search_airports)
-from travelplanner.roads import _coerce, drive_route
+from travelplanner.roads import _coerce
 from travelplanner.samples import sample_timetable
 from travelplanner.trips import plan_trip
 from travelplanner.viz import MODE_COLORS, itinerary_segments
@@ -196,30 +197,6 @@ def _parse_depart(value, default: datetime) -> datetime:
     raise ValueError(f"could not parse depart time {value!r} (use YYYY-MM-DDTHH:MM)")
 
 
-def _road_geometries(itinerary, *, region, data_dir, depart_at, turn_aware):
-    """Real routed (lat, lon) paths per CAR leg, keyed by 1-based leg index.
-
-    Returns (geometries, warnings). A leg whose region cannot be resolved (no
-    coverage / cross-border) is skipped with a warning rather than failing the
-    whole request, so the map still draws the trip with a straight car leg.
-    """
-    geometries: dict = {}
-    warnings: list = []
-    for i, leg in enumerate(itinerary.legs, 1):
-        if leg.mode is not Mode.CAR:
-            continue
-        try:
-            route = drive_route(leg.from_loc, leg.to_loc, region=region,
-                                data_dir=data_dir, depart_at=depart_at,
-                                turn_aware=turn_aware)
-        except ValueError as exc:
-            warnings.append(f"road geometry unavailable for a car leg: {exc}")
-            continue
-        if route.drivable and len(route.geometry) >= 2:
-            geometries[i] = [[lat, lon] for lat, lon in route.geometry]
-    return geometries, warnings
-
-
 def plan_response(origin, dest, depart_at: datetime, timetable, *,
                   objective: str = "air_priority", top_n: int = 3,
                   access: str = "car", road: bool = False,
@@ -240,14 +217,10 @@ def plan_response(origin, dest, depart_at: datetime, timetable, *,
     warnings: list = []
     options = []
     for it in itineraries:
-        geometries: dict = {}
-        if road:
-            geometries, warns = _road_geometries(
-                it, region=region, data_dir=data_dir, depart_at=depart_at,
-                turn_aware=turn_aware)
-            warnings.extend(warns)
         opt = it.to_dict(with_legs=True)
-        opt["segments"] = itinerary_segments(it, geometries)
+        # Each leg already carries its routed polyline when a road-backed connector
+        # produced one (road=True); the map follows it, else draws a straight line.
+        opt["segments"] = itinerary_segments(it)
         options.append(opt)
     # Explain the two confusing outcomes a user actually hits, so an empty or
     # car-only result reads as honest rather than broken.
@@ -701,6 +674,22 @@ def serve(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT, **kwargs) -> None:
         server.server_close()
 
 
+def _enable_continent_roads(data_dir: str | None) -> None:
+    """Wire a continent road graph so cross-border drives follow real highways: an
+    explicit --continent-roads dir, else the auto-built europe-highway artifact if
+    present. Left off when neither exists (cross-border drive stays a straight line).
+    """
+    from travelplanner.roads import cache_dir, set_continent_road
+
+    if data_dir is None:
+        default = os.path.join(cache_dir(), "artifacts", "europe-highway")
+        if os.path.exists(os.path.join(default, "meta.json")):
+            data_dir = default
+    if data_dir is not None:
+        set_continent_road("europe", data_dir)
+        print(f"cross-border drives: routing over {data_dir}")
+
+
 def main(argv=None) -> None:
     parser = argparse.ArgumentParser(
         description="travelplanner demo API + map UI (pure stdlib)")
@@ -710,11 +699,15 @@ def main(argv=None) -> None:
                         help="Geofabrik region for road-backed car legs")
     parser.add_argument("--data-dir", default=None,
                         help="offline road artifact dir (build_region output)")
+    parser.add_argument("--continent-roads", default=None,
+                        help="road artifact dir for cross-border drives "
+                             "(default: auto-detect the europe-highway artifact)")
     parser.add_argument("--turn-aware", action="store_true",
                         help="route car legs over the turn-aware graph")
     parser.add_argument("--offline", action="store_true",
                         help="bundled cities only; no Nominatim/network geocoding")
     args = parser.parse_args(argv)
+    _enable_continent_roads(args.continent_roads)
     serve(args.host, args.port, region=args.region, data_dir=args.data_dir,
           turn_aware=args.turn_aware, online=not args.offline)
 

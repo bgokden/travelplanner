@@ -137,11 +137,14 @@ def _itinerary_segments(itinerary, geometries=None) -> list:
     segments = []
     for i, leg in enumerate(itinerary.legs, 1):
         mode = leg.mode.value
-        # Use the routed path only when it is a real polyline (>= 2 points); an
-        # empty or single-point geometry (e.g. a zero-distance drive_route) falls
-        # back to the straight endpoints rather than drawing an invisible segment.
+        # Prefer an explicit override (geometries dict), then the leg's own routed
+        # polyline (set by a road-backed connector), else the straight endpoints. A
+        # real polyline needs >= 2 points; a shorter one falls back rather than
+        # drawing an invisible segment.
         if i in geometries and len(geometries[i]) >= 2:
             coords = [[lat, lon] for lat, lon in geometries[i]]
+        elif leg.geometry and len(leg.geometry) >= 2:
+            coords = [[lat, lon] for lat, lon in leg.geometry]
         else:
             coords = [[leg.from_loc.lat, leg.from_loc.lon],
                       [leg.to_loc.lat, leg.to_loc.lon]]

@@ -26,7 +26,8 @@ from travelplanner.graph.coupling import (
 from travelplanner.graph.coupling.planner import plan_multi
 from travelplanner.graph.query import Objective
 from travelplanner.graph.scheduled.model import Timetable
-from travelplanner.roads import _auto_region, _coerce, region_connector
+from travelplanner.roads import (
+    _auto_region, _coerce, continent_road, region_connector)
 
 # Stops further than this from both endpoints cannot be an access/egress point,
 # so they are dropped before the (expensive) road-node snapping in CCHConnector.
@@ -72,10 +73,22 @@ def _split_connector(origin: Location, dest: Location, timetable: Timetable,
     egress = region_connector(egr_region.pbf_url,
                               _nearby_stops(timetable, [dest], margin),
                               turn_aware=turn_aware)
-    # The cross-region drive spans no single graph; keep a geometric ground
-    # candidate so the frontier still has a direct option.
     return SplitConnector(access, egress,
-                          direct_connector=GeometricConnector(timetable.stops))
+                          direct_connector=_cross_region_direct(timetable))
+
+
+def _cross_region_direct(timetable: Timetable):
+    """The whole-trip drive for a cross-region trip: a configured continent road
+    graph routes it over real highways, else a straight-line geometric estimate (no
+    single per-region extract spans both endpoints)."""
+    cont = continent_road()
+    if cont is None:
+        return GeometricConnector(timetable.stops)
+    region, data_dir = cont
+    # Highway-only continent graph: nodes are sparser, so allow a wider snap from
+    # the door to the nearest highway. It carries no turn data, so it stays
+    # node-based regardless of the trip's turn_aware setting.
+    return region_connector(region, {}, data_dir=data_dir, max_snap_km=60.0)
 
 
 def _transit_connector(timetable: Timetable) -> GeometricConnector:

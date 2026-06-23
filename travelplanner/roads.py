@@ -300,7 +300,8 @@ def _router_for(region, data_dir, turn_aware):
     return road_router(region, data_dir)
 
 
-def build_region(region: str, out_dir: str, *, turn_aware: bool = False) -> str:
+def build_region(region: str, out_dir: str, *, turn_aware: bool = False,
+                 allowed: frozenset[str] | None = None) -> str:
     """Build an offline road artifact for `region` into `out_dir`; return it.
 
     Run this at build time, where the network is available: it downloads the OSM
@@ -309,17 +310,24 @@ def build_region(region: str, out_dir: str, *, turn_aware: bool = False) -> str:
     runtime, pass data_dir=out_dir to road_router/drive/region_connector to load
     it with no network and no re-parsing.
 
+    `allowed` restricts the highway classes kept (default: all driving roads). Pass
+    e.g. {"motorway", "motorway_link", "trunk", "trunk_link"} to build a sparse
+    long-distance network for a continent-scale extract -- the full road graph of a
+    continent is too memory-heavy, but the motorway/trunk subset fits and routes
+    cross-country drives over real highways.
+
     turn_aware=True additionally parses signals + turn restrictions and computes
     the turn-expanded contraction order, so drive(..., turn_aware=True,
     data_dir=out_dir) loads instantly offline instead of re-parsing and
     re-expanding (the slow, ~minutes step).
     """
     from travelplanner.graph.road import CCHRoadRouter
-    from travelplanner.graph.road.osm import load_road_graph
+    from travelplanner.graph.road.osm import DRIVING_HIGHWAYS, load_road_graph
     from travelplanner.graph.road.store import save_road_artifact
 
-    graph = load_road_graph(download_region(region), store_names=False,
-                            turn_data=turn_aware)
+    graph = load_road_graph(
+        download_region(region), store_names=False, turn_data=turn_aware,
+        allowed=allowed if allowed is not None else DRIVING_HIGHWAYS)
     router = CCHRoadRouter(graph)  # computes the contraction order
     save_road_artifact(graph, router.order, out_dir)
     if turn_aware:
@@ -329,6 +337,30 @@ def build_region(region: str, out_dir: str, *, turn_aware: bool = False) -> str:
         expanded = build_expanded_graph(graph, turn_costs=TurnCosts())
         save_expanded_order(ExpandedCCHRoadRouter(expanded).order, out_dir)
     return out_dir
+
+
+# A continent-scale road artifact (region label, data_dir) used to road-route a
+# cross-border drive: no single per-region extract spans, say, the Netherlands to
+# Italy, but a prebuilt highway-only continent graph does. None = disabled (the
+# cross-region through-drive falls back to a straight-line estimate).
+_CONTINENT_ROAD: tuple | None = None
+
+
+def set_continent_road(region: str | None, data_dir: str | None = None) -> None:
+    """Configure (region=None clears) a continent road graph for cross-border drives.
+
+    `region` is a label/URL and `data_dir` a prebuilt artifact -- typically a
+    highway-only Europe graph from build_region(url, dir, allowed={"motorway",
+    "trunk", ...}). Once set, a trip whose endpoints fall in different regions
+    routes its through-drive over this graph instead of a straight line.
+    """
+    global _CONTINENT_ROAD
+    _CONTINENT_ROAD = (region, data_dir) if region is not None else None
+
+
+def continent_road() -> tuple | None:
+    """The configured (region, data_dir) continent road backend, or None."""
+    return _CONTINENT_ROAD
 
 
 def region_connector(region: str, stops, *, data_dir: str | None = None,

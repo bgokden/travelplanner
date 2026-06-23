@@ -85,49 +85,33 @@ def test_parse_depart_formats_and_default():
         _parse_depart("not-a-time", default)
 
 
-def _car_itinerary():
+def _car_itinerary(geometry=None):
     from travelplanner.models import (CostLevel, Itinerary, Leg, Location,
                                       LocationType, Mode)
     from datetime import timedelta
     a = Location("A", LocationType.CITY, 47.14, 9.52)
     b = Location("B", LocationType.CITY, 47.07, 9.50)
     leg = Leg(Mode.CAR, a, b, 8.0, timedelta(minutes=12), timedelta(0),
-              CostLevel.MEDIUM)
+              CostLevel.MEDIUM, geometry=geometry)
     return Itinerary([leg], datetime(2026, 7, 1, 8, 0), 0.0)
 
 
-def test_road_geometries_attaches_routed_path(monkeypatch):
-    # _road_geometries must read the real routed path off a Route (regression:
-    # it referenced a non-existent .feasible attribute instead of .drivable).
-    import travelplanner.service as service
-    from travelplanner.roads import Route
-    from datetime import timedelta
+def test_segments_follow_leg_routed_geometry():
+    # The map segments follow a leg's own routed polyline (set by a road-backed
+    # connector); the service no longer re-routes for geometry.
+    from travelplanner.viz import itinerary_segments
     geom = ((47.14, 9.52), (47.10, 9.51), (47.07, 9.50))
-
-    def fake_drive_route(origin, dest, **kwargs):
-        return Route(True, timedelta(minutes=12), 8.0, geometry=geom)
-
-    monkeypatch.setattr(service, "drive_route", fake_drive_route)
-    it = _car_itinerary()
-    geoms, warnings = service._road_geometries(
-        it, region="liechtenstein", data_dir=None, depart_at=it.depart_at,
-        turn_aware=False)
-    assert warnings == []
-    assert geoms[1] == [[47.14, 9.52], [47.10, 9.51], [47.07, 9.50]]
+    segs = itinerary_segments(_car_itinerary(geometry=geom))
+    assert segs[0]["coords"] == [[47.14, 9.52], [47.10, 9.51], [47.07, 9.50]]
 
 
-def test_road_geometries_warns_when_region_unresolvable(monkeypatch):
-    import travelplanner.service as service
-
-    def boom(origin, dest, **kwargs):
-        raise ValueError("no region covers these points")
-
-    monkeypatch.setattr(service, "drive_route", boom)
-    it = _car_itinerary()
-    geoms, warnings = service._road_geometries(
-        it, region=None, data_dir=None, depart_at=it.depart_at, turn_aware=False)
-    assert geoms == {}
-    assert warnings and "no region" in warnings[0]
+def test_segments_straight_line_without_geometry():
+    from travelplanner.viz import itinerary_segments
+    it = _car_itinerary()                       # no routed path -> straight endpoints
+    leg = it.legs[0]
+    segs = itinerary_segments(it)
+    assert segs[0]["coords"] == [[leg.from_loc.lat, leg.from_loc.lon],
+                                 [leg.to_loc.lat, leg.to_loc.lon]]
 
 
 def test_geocode_suggestions_bundled_then_online(monkeypatch):
