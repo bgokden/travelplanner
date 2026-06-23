@@ -66,14 +66,26 @@ from travelplanner import plan_trip, Objective, sample_timetable, sample_trip
 tt = sample_timetable()
 origin, dest, depart = sample_trip()
 
-for it in plan_trip(origin, dest, depart, tt, objective=Objective.AIR_PRIORITY):
-    print(it.primary_mode.value, it.arrive_at, it.cost_level.value)
+for it in plan_trip(origin, dest, depart, tt):          # ranked, fastest first
+    print(f"{it.primary_mode.value}  {it.total_duration_human}  "
+          f"arrive {it.arrive_at:%H:%M}  ({it.cost_level.value})")
     for leg in it.legs:
-        print("  ", leg.mode.value, leg.from_loc.name, "->", leg.to_loc.name)
+        print(f"  {leg.depart_at:%H:%M}-{leg.arrive_at:%H:%M}  {leg.describe()}")
 ```
 
-Switch the objective to `FASTEST`, `CHEAPEST`, `FEWEST_TRANSFERS`, or `GREENEST`
-(least private-car distance) to see the frontier reorder.
+Switch the objective with `objective=Objective.CHEAPEST` (or `FASTEST`,
+`FEWEST_TRANSFERS`, `GREENEST` for least private-car distance, or `AIR_PRIORITY`)
+to see the frontier reorder.
+
+**What you get back:** each result is an `Itinerary` that renders like a route
+card. The top line is `primary_mode`, `total_duration_human` ("2h 9m"),
+`arrive_at`, `num_transfers`, and `cost_level` (a relative low/medium/high band --
+the planner has no fare model). Each `leg` carries absolute `depart_at`/`arrive_at`
+(local to its endpoints via `from_loc.tz`/`to_loc.tz`), a `describe()` step
+("Flight from Schiphol to Zurich Airport"), and `from_loc`/`to_loc` with
+`lat`/`lon` (straight-line geometry; routed polylines are not on the result).
+`it.to_dict()`/`it.to_json()` give the same data JSON-safe, and
+`itinerary_records(results)` is a pandas-ready table.
 
 **Choosing how the first/last mile works:**
 
@@ -106,7 +118,7 @@ cache.
 ```python
 from travelplanner import plan_trip
 
-results = plan_trip("Amsterdam", "Zurich", depart)   # no timetable: auto-composed
+results = plan_trip("Amsterdam", "Zurich")   # departs now, timetable auto-composed
 ```
 
 From the CLI, the same is the default — `travelplanner plan "52.37,4.90"
@@ -127,8 +139,8 @@ from travelplanner import load_timetable, plan_trip
 
 tt = load_timetable("path/to/gtfs_feed/")     # GTFS: stops, routes, trips,
                                               # stop_times, calendar(_dates)
-results = plan_trip("Amsterdam", "Vaduz", depart, tt)            # straight-line access
-results = plan_trip("Amsterdam", "Vaduz", depart, tt, road=True) # real road access
+results = plan_trip("Amsterdam", "Zurich", timetable=tt)            # straight-line access
+results = plan_trip("Amsterdam", "Zurich", timetable=tt, road=True) # real road access
 ```
 
 When you supply a feed, transit quality is feed quality (no auto-sourcing or

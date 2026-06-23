@@ -125,6 +125,10 @@ class Leg:
     def duration(self) -> timedelta:
         return self.travel_time + self.overhead
 
+    @property
+    def duration_human(self) -> str:
+        return humanize_duration(self.duration)
+
     def describe(self) -> str:
         """A one-line route-card step, e.g. "Walk to Schiphol" or "Flight from
         Schiphol to Zurich Airport" (line-haul names both ends)."""
@@ -144,7 +148,7 @@ class Leg:
             "travel_time_s": self.travel_time.total_seconds(),
             "overhead_s": self.overhead.total_seconds(),
             "duration_s": self.duration.total_seconds(),
-            "duration_human": humanize_duration(self.duration),
+            "duration_human": self.duration_human,
             "cost_level": self.cost_level.value,
         }
         if self.depart_at is not None:
@@ -179,6 +183,10 @@ class Itinerary:
         return sum((leg.duration for leg in self.legs), timedelta())
 
     @property
+    def total_duration_human(self) -> str:
+        return humanize_duration(self.total_duration)
+
+    @property
     def arrive_at(self) -> datetime:
         return self.depart_at + self.total_duration
 
@@ -211,7 +219,7 @@ class Itinerary:
             "depart_at": _iso_seconds(self.depart_at),
             "arrive_at": _iso_seconds(self.arrive_at),
             "total_duration_s": self.total_duration.total_seconds(),
-            "total_duration_human": humanize_duration(self.total_duration),
+            "total_duration_human": self.total_duration_human,
             "total_minutes": self.total_minutes,
             "total_distance_km": self.total_distance_km,
             "cost_level": self.cost_level.value,

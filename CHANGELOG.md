@@ -7,6 +7,15 @@ All notable changes to this project are documented here. The format is based on
 ## [Unreleased]
 
 ### Added
+- Route-card-friendly results. Each `Leg` now carries absolute `depart_at`/
+  `arrive_at` (stamped from the itinerary's departure, local to each endpoint via
+  its `tz`) and a `describe()` step summary ("Flight from Schiphol to Zurich
+  Airport"). `humanize_duration` plus `Itinerary.total_duration_human` /
+  `Leg.duration_human` format a length as "2h 9m". `to_dict()` exposes all of these
+  (`summary`, per-leg `depart_at`/`arrive_at`, `*_human`) with clock times rounded
+  to whole seconds, so a consumer renders a Google-Maps-style card without
+  re-deriving the running clock. The CLI prints the humanized total and gains a
+  `plan --top N` flag. `CostLevel` is documented as a relative band (no fare model).
 - Auto-sourced timetables (`plan_trip` with no `Timetable`, and the default for
   `travelplanner plan`): omit the feed and one is composed for the trip -- the
   OpenFlights flight network scoped to airports near the endpoints, plus the GTFS

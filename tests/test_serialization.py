@@ -47,6 +47,12 @@ def test_to_dict_includes_human_durations():
     assert it.legs[1].to_dict()["duration_human"] == "4h 20m"
 
 
+def test_human_duration_properties():
+    it = _itin()
+    assert it.total_duration_human == "5h 16m"
+    assert it.legs[1].duration_human == "4h 20m"
+
+
 def test_legs_get_stamped_absolute_times():
     it = _itin()                               # depart 09:00
     l0, l1, l2 = it.legs
