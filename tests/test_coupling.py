@@ -280,6 +280,29 @@ def test_cch_connector_leg_distance_is_routed_length():
     assert leg.distance_km > 30                       # not the old 600s/3600*60 = 10 km
 
 
+def test_cch_connector_drive_time_responds_to_departure_time():
+    # Change A: the trip's departure time reaches the road speed model, so a
+    # classified road's drive time rises at rush hour and eases at night. (Synthetic
+    # arcs with no highway class stay at multiplier 1.0; this one is "primary".)
+    b = RoadGraphBuilder()
+    b.add_node("a", 47.0, 7.0)
+    b.add_node("b", 47.0, 7.50)                       # ~38 km east
+    b.add_road("a", "b", 600, highway="primary")      # classified: time-of-day applies
+    router = CCHRoadRouter(b.build())
+    tt = Timetable()
+    tt.add_stop(_stop("B", 47.0, 7.50))
+    conn = CCHConnector(router, tt.stops, stop_to_node={"B": "b"})
+    origin = place("o", LocationType.HOTEL, 47.0, 7.0)
+    dest = place("d", LocationType.HOTEL, 47.0, 7.50)
+
+    peak = conn.direct(origin, dest, depart_at=datetime(2026, 7, 1, 8, 0))   # Wed rush
+    night = conn.direct(origin, dest, depart_at=datetime(2026, 7, 1, 3, 0))  # Wed night
+    avg = conn.direct(origin, dest, day=date(2026, 7, 1))                    # no time
+    assert peak.seconds > avg.seconds > night.seconds   # rush > average > night
+    # The routed distance is geometric and must not move with the clock.
+    assert peak.distance_km == night.distance_km == avg.distance_km
+
+
 def test_cch_connector_same_node_uses_geometric_estimate():
     # Regression: two distinct points that snap to the same road node yielded a
     # 0 km / 0 s drive. Fall back to a geometric estimate instead.

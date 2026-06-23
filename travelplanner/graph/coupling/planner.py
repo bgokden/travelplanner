@@ -300,15 +300,22 @@ def _candidates(origin: Location, dest: Location, depart_at: datetime,
     day = depart_at.date()
     candidates: list[Itinerary] = []
 
-    ground = connector.direct(origin, dest, conditions, day=day)
+    ground = connector.direct(origin, dest, conditions, day=day,
+                              depart_at=depart_at)
     if ground is not None:
         candidates.append(_ground_itinerary(origin, dest, depart_at, ground))
 
-    access = connector.access(origin, conditions, day=day)
+    access = connector.access(origin, conditions, day=day, depart_at=depart_at)
     sources = {sid: depart_at + timedelta(seconds=leg.seconds)
                for sid, leg in access.items() if sid in timetable.stops}
+    # Egress legs are priced for every candidate stop up front, before the journey
+    # (and thus the actual arrival time) is known, so their time-of-day congestion
+    # is referenced to depart_at like access/direct. Exact for same-period trips;
+    # an approximation for a long/overnight trip where arrival sits in a different
+    # congestion band -- still far better than ignoring time of day entirely.
     egress = {sid: leg for sid, leg in
-              connector.egress(dest, conditions, day=day).items()
+              connector.egress(dest, conditions, day=day,
+                               depart_at=depart_at).items()
               if sid in timetable.stops}
     if sources and egress:
         csa = ConnectionScan(timetable, horizon)

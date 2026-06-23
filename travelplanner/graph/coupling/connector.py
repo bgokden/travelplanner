@@ -11,7 +11,7 @@ snapping. Both expose the same methods so the planner is connector-agnostic.
 """
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from typing import Protocol
 
 from travelplanner.geo import haversine
@@ -28,14 +28,20 @@ class AccessLeg:
 
 
 class RoadConnector(Protocol):
+    # day fixes the date (seasonal/day-of-week road validity); depart_at, when
+    # given, additionally drives the time-of-day speed model (rush-hour curve) for
+    # road-backed connectors. Straight-line connectors ignore both.
     def access(self, origin: Location, conditions: frozenset[str],
-               *, day=None) -> dict[str, AccessLeg]: ...
+               *, day=None, depart_at: datetime | None = None
+               ) -> dict[str, AccessLeg]: ...
 
     def egress(self, dest: Location, conditions: frozenset[str],
-               *, day=None) -> dict[str, AccessLeg]: ...
+               *, day=None, depart_at: datetime | None = None
+               ) -> dict[str, AccessLeg]: ...
 
     def direct(self, origin: Location, dest: Location,
-               conditions: frozenset[str], *, day=None) -> AccessLeg | None: ...
+               conditions: frozenset[str], *, day=None,
+               depart_at: datetime | None = None) -> AccessLeg | None: ...
 
 
 # Marginal driving speeds by distance band: the first urban/access kilometres run
@@ -114,16 +120,18 @@ class GeometricConnector:
         return out
 
     def access(self, origin: Location, conditions: frozenset[str] = frozenset(),
-               *, day=None) -> dict[str, AccessLeg]:
+               *, day=None, depart_at: datetime | None = None
+               ) -> dict[str, AccessLeg]:
         return self._nearby(origin)
 
     def egress(self, dest: Location, conditions: frozenset[str] = frozenset(),
-               *, day=None) -> dict[str, AccessLeg]:
+               *, day=None, depart_at: datetime | None = None
+               ) -> dict[str, AccessLeg]:
         return self._nearby(dest)
 
     def direct(self, origin: Location, dest: Location,
                conditions: frozenset[str] = frozenset(), *,
-               day=None) -> AccessLeg | None:
+               day=None, depart_at: datetime | None = None) -> AccessLeg | None:
         if haversine(origin.lat, origin.lon, dest.lat, dest.lon) > self.max_ground_km:
             return None
         return self._leg_to(origin, dest)
@@ -149,19 +157,22 @@ class SplitConnector:
         self._direct = direct_connector
 
     def access(self, origin: Location, conditions: frozenset[str] = frozenset(),
-               *, day=None) -> dict[str, AccessLeg]:
-        return self._access.access(origin, conditions, day=day)
+               *, day=None, depart_at: datetime | None = None
+               ) -> dict[str, AccessLeg]:
+        return self._access.access(origin, conditions, day=day, depart_at=depart_at)
 
     def egress(self, dest: Location, conditions: frozenset[str] = frozenset(),
-               *, day=None) -> dict[str, AccessLeg]:
-        return self._egress.egress(dest, conditions, day=day)
+               *, day=None, depart_at: datetime | None = None
+               ) -> dict[str, AccessLeg]:
+        return self._egress.egress(dest, conditions, day=day, depart_at=depart_at)
 
     def direct(self, origin: Location, dest: Location,
                conditions: frozenset[str] = frozenset(), *,
-               day=None) -> AccessLeg | None:
+               day=None, depart_at: datetime | None = None) -> AccessLeg | None:
         if self._direct is None:
             return None
-        return self._direct.direct(origin, dest, conditions, day=day)
+        return self._direct.direct(origin, dest, conditions, day=day,
+                                   depart_at=depart_at)
 
 
 class CCHConnector:
@@ -193,7 +204,6 @@ class CCHConnector:
             node = self._nearest_node(stop.lat, stop.lon)
             if node is not None:        # a stop outside the road coverage has none
                 self._stop_node[sid] = node
-        self._customized: dict[tuple, object] = {}
 
     def _walk_leg(self, dist_km: float) -> AccessLeg:
         return AccessLeg(Mode.WALK, dist_km / self.walk_kmh * 3600.0, dist_km,
@@ -208,20 +218,18 @@ class CCHConnector:
             return None
         return self.router.graph.key(idx)
 
-    def _road(self, conditions: frozenset[str], day):
-        # cache one customized metric per (conditions, day): seasonal / day-of-week
-        # validity makes the road metric date-dependent, so a connector reused
-        # across dates must not serve the first day's metric for a later day.
+    def _road(self, conditions: frozenset[str], day,
+              depart_at: datetime | None = None):
+        # The customized road metric for this (day, conditions, departure). day
+        # fixes seasonal / day-of-week validity; depart_at additionally drives the
+        # time-of-day speed model (rush-hour). router.customized() caches by
+        # (day, conditions, model, hour), so the metric is built once and reused
+        # across stops -- no separate per-connector cache needed.
         # day=None means "current conditions" (seasonal validity needs a date),
         # matching drive_route; the RoadConnector protocol allows it.
         if day is None:
-            day = date.today()
-        key = (conditions, day)
-        road = self._customized.get(key)
-        if road is None:
-            road = self.router.customize(day, conditions)
-            self._customized[key] = road
-        return road
+            day = depart_at.date() if depart_at is not None else date.today()
+        return self.router.customized(day, conditions, depart_at=depart_at)
 
     def _path_km(self, path) -> float:
         # real routed length: haversine-sum the node coordinates along the path
@@ -232,11 +240,12 @@ class CCHConnector:
                              g.latitude[idx[i + 1]], g.longitude[idx[i + 1]])
                    for i in range(len(idx) - 1))
 
-    def _drive(self, from_node: str, to_node: str, conditions, day):
+    def _drive(self, from_node: str, to_node: str, conditions, day,
+               depart_at: datetime | None = None):
         """(seconds, routed_km) for a road leg, or None if unreachable."""
         if from_node == to_node:
             return (0.0, 0.0)
-        path = self._road(conditions, day).route(from_node, to_node)
+        path = self._road(conditions, day, depart_at).route(from_node, to_node)
         if path is None:
             return None
         return (float(path.seconds), self._path_km(path))
@@ -249,7 +258,8 @@ class CCHConnector:
                          d_km, CostLevel.MEDIUM)
 
     def _legs_from_point(self, point: Location, conditions, day,
-                         to_dest: bool) -> dict[str, AccessLeg]:
+                         to_dest: bool, depart_at: datetime | None = None
+                         ) -> dict[str, AccessLeg]:
         origin_node = self._nearest_node(point.lat, point.lon)
         out: dict[str, AccessLeg] = {}
         for sid, stop in self.stops.items():
@@ -266,7 +276,7 @@ class CCHConnector:
                 out[sid] = self._coarse_leg(d_km)
                 continue
             a, b = (node, origin_node) if to_dest else (origin_node, node)
-            drive = self._drive(a, b, conditions, day)
+            drive = self._drive(a, b, conditions, day, depart_at)
             if drive is None:
                 continue
             secs, dist_km = drive
@@ -275,17 +285,21 @@ class CCHConnector:
 
     def access(self, origin: Location,
                conditions: frozenset[str] = frozenset(), *,
-               day=None) -> dict[str, AccessLeg]:
-        return self._legs_from_point(origin, conditions, day, to_dest=False)
+               day=None, depart_at: datetime | None = None
+               ) -> dict[str, AccessLeg]:
+        return self._legs_from_point(origin, conditions, day, to_dest=False,
+                                     depart_at=depart_at)
 
     def egress(self, dest: Location,
                conditions: frozenset[str] = frozenset(), *,
-               day=None) -> dict[str, AccessLeg]:
-        return self._legs_from_point(dest, conditions, day, to_dest=True)
+               day=None, depart_at: datetime | None = None
+               ) -> dict[str, AccessLeg]:
+        return self._legs_from_point(dest, conditions, day, to_dest=True,
+                                     depart_at=depart_at)
 
     def direct(self, origin: Location, dest: Location,
                conditions: frozenset[str] = frozenset(), *,
-               day=None) -> AccessLeg | None:
+               day=None, depart_at: datetime | None = None) -> AccessLeg | None:
         d_km = haversine(origin.lat, origin.lon, dest.lat, dest.lon)
         if d_km <= self.walk_threshold_km:         # a short hop is walked, not driven
             return self._walk_leg(d_km)
@@ -295,7 +309,7 @@ class CCHConnector:
             return None
         if o == d:                                 # graph too coarse to separate them
             return self._coarse_leg(d_km)
-        drive = self._drive(o, d, conditions, day)
+        drive = self._drive(o, d, conditions, day, depart_at)
         if drive is None:
             return None
         secs, dist_km = drive
