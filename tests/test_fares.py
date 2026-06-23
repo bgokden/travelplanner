@@ -3,6 +3,7 @@
 from travelplanner.models import Mode
 from travelplanner.fares import (
     DEFAULT_CURRENCY,
+    FARE_RATES,
     fare_currency,
     free_model,
     get_fare_model,
@@ -13,11 +14,12 @@ from travelplanner.fares import (
 
 
 def test_heuristic_base_plus_per_km():
+    # Verify the formula against the active rate table (calibration-robust).
     m = heuristic_fare_model()
     assert m(Mode.WALK, 5.0) == 0.0
-    assert m(Mode.CAR, 100.0) == 20.0            # 0 + 0.20 * 100
-    assert m(Mode.TRAIN, 100.0) == 2.50 + 0.15 * 100
-    assert m(Mode.FLIGHT, 500.0) == 45.0 + 0.07 * 500
+    for mode, dist in [(Mode.CAR, 100.0), (Mode.TRAIN, 100.0), (Mode.FLIGHT, 500.0)]:
+        base, per_km = FARE_RATES[mode]
+        assert m(mode, dist) == base + per_km * dist
 
 
 def test_unknown_mode_priced_like_car():
@@ -42,8 +44,10 @@ def test_currency_default_and_override():
 
 
 def test_active_model_set_get_reset():
+    base, per_km = FARE_RATES[Mode.CAR]
+    default_car_10 = base + per_km * 10
     try:
-        assert get_fare_model()(Mode.CAR, 10.0) == 2.0    # default heuristic
+        assert get_fare_model()(Mode.CAR, 10.0) == default_car_10   # default heuristic
         assert fare_currency() == DEFAULT_CURRENCY
         set_fare_model(free_model)
         assert get_fare_model()(Mode.CAR, 10.0) == 0.0
@@ -52,5 +56,5 @@ def test_active_model_set_get_reset():
         assert fare_currency() == "USD"
     finally:
         reset_fare_model()
-    assert get_fare_model()(Mode.CAR, 10.0) == 2.0
+    assert get_fare_model()(Mode.CAR, 10.0) == default_car_10
     assert fare_currency() == DEFAULT_CURRENCY

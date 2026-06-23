@@ -3,6 +3,8 @@
 from datetime import date, datetime, timedelta
 
 from travelplanner import place
+from travelplanner.fares import (
+    FARE_RATES, heuristic_fare_model, reset_fare_model, set_fare_model)
 from travelplanner.models import CostLevel, LocationType, Mode
 from travelplanner.graph.schema import NodeType
 from travelplanner.graph.scheduled import Stop, Timetable, make_trip
@@ -176,8 +178,6 @@ def test_seasonal_ferry_present_in_summer_absent_in_winter():
     tt.add_stop(_stop("Xp", 46.0, 6.0, NodeType.FERRY_TERMINAL))
     tt.add_stop(_stop("Yp", 46.0, 7.0, NodeType.FERRY_TERMINAL))
     summer = Validity(open_months=frozenset({6, 7, 8, 9}))
-    # Cheaper than driving, so the ferry stays on the Pareto frontier even
-    # though driving the 77 km straight line is faster.
     tt.add_trip(make_trip("ferry", Mode.FERRY, [
         ("Xp", "11:00", "11:00"), ("Yp", "12:00", "12:00")], validity=summer,
         cost_level=CostLevel.LOW))
@@ -185,8 +185,16 @@ def test_seasonal_ferry_present_in_summer_absent_in_winter():
     origin = place("nearX", LocationType.HOTEL, 46.005, 6.005)
     dest = place("nearY", LocationType.HOTEL, 46.005, 6.995)
 
-    summer_res = plan(origin, dest, datetime(2026, 7, 1, 8, 0), tt, conn)
-    winter_res = plan(origin, dest, datetime(2026, 1, 15, 8, 0), tt, conn)
+    # Price the crossing as a genuine ferry shortcut -- much cheaper than driving --
+    # so the slower ferry stays non-dominated on the (now fare-based) cost axis.
+    # (The default model prices this short straight-line hop about like the drive.)
+    set_fare_model(heuristic_fare_model(rates={
+        Mode.FERRY: (0.0, 0.02), Mode.CAR: (0.0, 0.60), Mode.WALK: (0.0, 0.0)}))
+    try:
+        summer_res = plan(origin, dest, datetime(2026, 7, 1, 8, 0), tt, conn)
+        winter_res = plan(origin, dest, datetime(2026, 1, 15, 8, 0), tt, conn)
+    finally:
+        reset_fare_model()
     assert _has_mode(summer_res, Mode.FERRY)
     assert not _has_mode(winter_res, Mode.FERRY)
 
@@ -347,7 +355,8 @@ def test_plan_prices_legs_with_active_fare_model():
     assert it.fare_currency == "EUR"
     assert it.fare_estimate is not None and it.fare_estimate > 0
     car = next(leg for leg in it.legs if leg.mode is Mode.CAR)
-    assert car.fare_estimate == round(0.20 * car.distance_km, 2)
+    base, per_km = FARE_RATES[Mode.CAR]
+    assert car.fare_estimate == round(base + per_km * car.distance_km, 2)
     assert abs(it.fare_estimate - car.fare_estimate) < 1e-9
 
 

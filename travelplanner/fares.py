@@ -28,15 +28,18 @@ FareModel = Callable[[Mode, float], float]
 DEFAULT_CURRENCY = "EUR"
 
 # (base, per_km) in DEFAULT_CURRENCY: a flat per-leg/boarding charge plus a marginal
-# distance rate. Rough and tunable -- see tmp/FARE_MODEL_DESIGN.md for rationale.
-#   CAR    marginal running cost (fuel + wear), not ownership/depreciation.
-#   TRAIN  intercity per-km with a base; also stands in for base-dominated transit.
+# distance rate. Rough Europe-centric figures (calibrated against ADAC fuel, rail
+# corridor, and ferry surveys -- see tmp/FARE_MODEL_DESIGN.md); tunable.
+#   CAR    marginal running cost (fuel ~0.12 + wear), not ownership/depreciation.
+#   TRAIN  advance-weighted intercity per-km with a base; stands in for base-
+#          dominated transit too.
+#   FERRY  roughest of all -- per-km varies ~10x by route/length; central estimate.
 #   FLIGHT base-heavy + low per-km to approximate fares flattening with distance.
 FARE_RATES = {
     Mode.WALK:   (0.0, 0.0),
-    Mode.CAR:    (0.0, 0.20),
-    Mode.TRAIN:  (2.50, 0.15),
-    Mode.FERRY:  (3.0, 0.20),
+    Mode.CAR:    (0.0, 0.15),
+    Mode.TRAIN:  (2.50, 0.12),
+    Mode.FERRY:  (5.0, 0.15),
     Mode.FLIGHT: (45.0, 0.07),
 }
 
