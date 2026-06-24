@@ -157,6 +157,25 @@ def test_short_footpath_only_transit_is_kept():
                and it.total_distance_km > 1.5 for it in results)
 
 
+def test_implausible_detour_transit_is_dropped():
+    """When the only transit route is a gross backtrack (the real through-service is
+    missing from the feed), it is dropped rather than offered as a 'train'. Here the
+    train detours via a hub far off the direct line; the direct ground stays."""
+    tt = Timetable()
+    tt.add_stop(_stop("A", 47.0, 7.0))     # at the origin
+    tt.add_stop(_stop("H", 50.0, 7.0))     # a hub ~330 km off the direct line
+    tt.add_stop(_stop("B", 47.0, 9.0))     # at the destination (~150 km from origin)
+    tt.add_trip(make_trip("DETOUR", Mode.TRAIN, [
+        ("A", "09:00", "09:00"), ("H", "12:00", "12:00"), ("B", "16:00", "16:00")]))
+    conn = GeometricConnector(tt.stops)
+    origin = place("o", LocationType.HOTEL, 47.0, 7.0)
+    dest = place("d", LocationType.HOTEL, 47.0, 9.0)
+    results = plan(origin, dest, DEP, tt, conn, top_n=5)
+    assert results                                    # the direct ground option remains
+    assert not any(leg.mode is Mode.TRAIN
+                   for it in results for leg in it.legs)   # the detour train is dropped
+
+
 def test_short_trip_is_pure_ground():
     tt = Timetable()
     tt.add_stop(_stop("Far1", 47.0, 7.0))

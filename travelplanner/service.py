@@ -198,6 +198,14 @@ def _parse_depart(value, default: datetime) -> datetime:
     raise ValueError(f"could not parse depart time {value!r} (use YYYY-MM-DDTHH:MM)")
 
 
+# Distance band over which an intercity train would normally exist; if the result
+# shows none across it, that is likely a GTFS coverage gap (the feed lacks the line),
+# not "there is no train" -- so the UI says so rather than presenting a flight/drive as
+# the verdict. Below the band trips are local; above it flights legitimately dominate.
+_RAIL_PLAUSIBLE_MIN_KM = 30.0
+_RAIL_PLAUSIBLE_MAX_KM = 1000.0
+
+
 def plan_response(origin, dest, depart_at: datetime, timetable=None, *,
                   objective: str = "air_priority", top_n: int = 3,
                   access: str = "car", road: bool = False,
@@ -254,6 +262,18 @@ def plan_response(origin, dest, depart_at: datetime, timetable=None, *,
         warnings.append(
             "No transit or flights reachable from these points; showing direct "
             + mode_word + " only.")
+    elif (timetable is None
+          and _RAIL_PLAUSIBLE_MIN_KM <= haversine(o.lat, o.lon, d.lat, d.lon)
+            <= _RAIL_PLAUSIBLE_MAX_KM
+          and not any(leg.mode is Mode.TRAIN
+                      for it in itineraries for leg in it.legs)):
+        # Auto-sourced transit (timetable=None) but no train across a corridor where an
+        # intercity train would normally exist: say so, so an absent train (uneven GTFS
+        # coverage) does not read as a verdict (e.g. Rome->Florence, where the
+        # Frecciarossa exists but is not in the catalog feed for this route).
+        warnings.append(
+            "No train in these results -- there may be rail on this route we have no "
+            "data for (GTFS coverage is uneven). Showing flights/driving only.")
     return {
         "origin": o.to_dict(),
         "dest": d.to_dict(),

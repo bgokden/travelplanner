@@ -43,6 +43,21 @@ _VEHICLE_MODES = frozenset({Mode.TRAIN, Mode.FERRY, Mode.FLIGHT})
 # could otherwise surface as a 100+ km "walk"). Shorter footpath routes are kept.
 _MAX_WALK_ONLY_KM = 10.0
 
+# Implausible-transit guard. When a corridor's feed lacks the real through-train, the
+# scan can stitch a gross detour or a many-hop chain out of sparse stops; such a journey
+# is dropped rather than shown. Two detour shapes, two tests:
+#  - a transfer-detour (Vienna->Venice routed via Stuttgart) -- each leg rides at normal
+#    speed, but the leg distances sum to far more than the trip: caught by the ratio.
+#  - a single run looping via a far intermediate stop -- it collapses to one leg with
+#    near endpoints but a long RIDE time: caught by the per-leg speed floor (ride time,
+#    not total, so a legitimate wait for a scheduled service is not flagged).
+# Plus a leg-count cap for stitched many-hop chains. The distance gate avoids distorting
+# a tiny great-circle. Below the gate, transit is left alone (short trips are local).
+_PLAUSIBLE_MIN_KM = 75.0
+_MIN_LEG_KMH = 25.0
+_MAX_DETOUR_RATIO = 2.0
+_MAX_JOURNEY_LEGS = 10
+
 # Line-haul mode restrictions used to diversify candidates.
 _MODE_SETS = (
     None,                                   # all modes (earliest arrival)
@@ -189,11 +204,13 @@ def _order_key(objective: Objective):
         if objective is Objective.FEWEST_TRANSFERS:
             return (transfers, total, cost)
         if objective is Objective.GREENEST:
-            # least private-car distance first (keep the transit-preferring
-            # intent), then least emissions so a train outranks a flight when
-            # both are car-free, then time. car_km/emissions are GREENEST frontier
-            # axes (see _objective_axes) so the greener option survives the filter.
-            return (car_km, emissions, total, transfers, cost)
+            # least modelled emissions first, then least private-car distance, then
+            # time. Emissions (not car-km) leads so a short-access flight never reads
+            # as greener than driving or rail -- minimising driving alone ranked a
+            # 230 km flight above the drive because the flight barely touches a car.
+            # car_km/emissions are GREENEST frontier axes (see _objective_axes) so the
+            # greener option survives the filter.
+            return (emissions, car_km, total, transfers, cost)
         # AIR_PRIORITY: prefer an itinerary that actually flies. Test for a FLIGHT
         # leg, not primary_mode (the longest leg) -- a long airport-access drive
         # could otherwise make a genuine flight rank as non-air.
@@ -248,6 +265,27 @@ def _transit_itinerary(origin: Location, dest: Location, depart_at: datetime,
                      depart_at=depart_at, score=0.0)
 
 
+def _implausible_transit(itin: Itinerary) -> bool:
+    """True for a transit itinerary no traveller would take (see the guard constants):
+    too many legs, a single vehicle leg that rode far around for its endpoints, or a
+    journey whose leg distances sum to a gross multiple of the straight-line trip."""
+    if len(itin.legs) > _MAX_JOURNEY_LEGS:
+        return True
+    leg_km = 0.0
+    for leg in itin.legs:
+        gc = haversine(leg.from_loc.lat, leg.from_loc.lon,
+                       leg.to_loc.lat, leg.to_loc.lon)
+        leg_km += gc
+        if leg.mode is Mode.WALK:
+            continue
+        hours = leg.travel_time.total_seconds() / 3600.0
+        if gc > _PLAUSIBLE_MIN_KM and hours > 0 and gc / hours < _MIN_LEG_KMH:
+            return True                       # a single leg looping via a far stop
+    trip = haversine(itin.legs[0].from_loc.lat, itin.legs[0].from_loc.lon,
+                     itin.legs[-1].to_loc.lat, itin.legs[-1].to_loc.lon)
+    return trip > _PLAUSIBLE_MIN_KM and leg_km / trip > _MAX_DETOUR_RATIO
+
+
 def _transit_candidate(csa: ConnectionScan, origin: Location, dest: Location,
                        depart_at: datetime, access: dict[str, AccessLeg],
                        sources: dict[str, datetime],
@@ -285,8 +323,14 @@ def _transit_candidate(csa: ConnectionScan, origin: Location, dest: Location,
                 for leg in journey.legs)
             if walk_km > _MAX_WALK_ONLY_KM:
                 continue
-        return _transit_itinerary(origin, dest, depart_at, access, journey,
+        itin = _transit_itinerary(origin, dest, depart_at, access, journey,
                                   e_leg, e_stop, timetable)
+        # Drop an implausible journey (a gross detour or a many-hop chain stitched
+        # from sparse stops when the real through-service is missing); a less
+        # contorted egress may still work, else no transit candidate is offered.
+        if _implausible_transit(itin):
+            continue
+        return itin
     return None
 
 

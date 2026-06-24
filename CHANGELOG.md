@@ -280,6 +280,17 @@ All notable changes to this project are documented here. The format is based on
   than failing, so a network blip never breaks an otherwise-usable cache.
 
 ### Fixed
+- Route-quality fixes from a multi-city logic check (10 city pairs, three personas).
+  (1) Implausible transit journeys are dropped before ranking: a vehicle leg that rode
+  far around for its endpoints, a route whose legs sum to a gross multiple of the
+  straight-line trip (e.g. Vienna->Venice routed via Stuttgart, 24h), or an
+  excessive-leg chain stitched from sparse feeds -- none reach the result. (2) GREENEST
+  now ranks on the modelled emissions estimate first, not minimised car-distance, so a
+  short-access flight is never returned as "greenest" over driving or rail (a 230 km
+  Rome->Florence flight was). (3) The demo notes a likely rail-coverage gap ("no train
+  in these results -- there may be rail we have no data for") when an auto-composed trip
+  over a rail-plausible distance returns none, so an absent train reads as missing data,
+  not a verdict.
 - Footpath transitive closure no longer hangs on a dense feed. It was an all-pairs
   Floyd-Warshall (O(V^3)) assuming a small footpath graph, but a city-scale GTFS feed
   has tens of thousands of footpath nodes, so building the scan hung. It is now a

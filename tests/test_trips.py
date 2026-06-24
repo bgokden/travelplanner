@@ -57,15 +57,15 @@ def test_plan_trip_objective_passthrough():
 
 
 def test_plan_trip_greenest_objective():
-    """GREENEST flows through plan_trip and prefers the lower-driving option."""
+    """GREENEST flows through plan_trip and prefers the lower-EMISSION option: driving
+    the ~600 km emits less than flying it, so GREENEST does not lead the flight."""
     tt = _airport_train_timetable()
     origin = place("Amsterdam centre", LocationType.HOTEL, 52.3702, 4.8952)
     dest = place("Vaduz", LocationType.HOTEL, 47.1410, 9.5215)
     depart = datetime(2026, 6, 17, 7, 30)
-    # transit access generates the no-car walk->train->flight option; GREENEST keeps it first
     best = plan_trip(origin, dest, depart, tt, access="transit",
                      objective=Objective.GREENEST)[0]
-    assert not any(leg.mode is Mode.CAR for leg in best.legs)
+    assert not any(leg.mode is Mode.FLIGHT for leg in best.legs)
 
 
 def test_plan_trip_top_n():
@@ -261,10 +261,10 @@ def test_plan_trip_car_access_default_drives_to_airport():
 
 
 def test_plan_trip_access_both_shows_car_and_transit():
-    """access='both' pools car and transit candidates so BOTH the drive-to-airport
-    flight and the walk-to-train itinerary appear on one frontier. The low-car
-    option is a strictly slower trade-off, so it is surfaced under GREENEST (where
-    it ranks), not padded into the time-ordered default result."""
+    """access='both' pools car and transit candidates so BOTH the drive and the
+    walk-to-train itinerary appear on one frontier. Under GREENEST the lowest-emission
+    option leads -- here driving the ~600 km emits less than flying it, so no flight
+    leads, and the slower flight options are still surfaced behind it."""
     tt = _airport_train_timetable()
     origin = place("Amsterdam centre", LocationType.HOTEL, 52.3702, 4.8952)
     dest = place("Vaduz", LocationType.HOTEL, 47.1410, 9.5215)
@@ -274,7 +274,7 @@ def test_plan_trip_access_both_shows_car_and_transit():
                     objective=Objective.GREENEST, top_n=5)
     first_legs = {it.legs[0].mode for it in res}
     assert Mode.CAR in first_legs and Mode.WALK in first_legs   # both access modes present
-    assert not any(leg.mode is Mode.CAR for leg in res[0].legs)  # GREENEST leads no-car
+    assert not any(leg.mode is Mode.FLIGHT for leg in res[0].legs)  # GREENEST leads no-flight
 
 
 def test_plan_trip_asymmetric_transit_access_car_egress():

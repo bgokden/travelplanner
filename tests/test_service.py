@@ -91,6 +91,28 @@ def test_plan_response_autocomposes_and_surfaces_notes(monkeypatch):
     assert any("unavailable" in w for w in res["warnings"])
 
 
+def test_plan_response_notes_missing_rail_when_autocomposed(monkeypatch):
+    """Auto-sourced transit (timetable=None) with no train across a rail-plausible
+    distance gets a coverage-gap note, so an absent train is not read as a verdict."""
+    import travelplanner.service as service
+    from travelplanner.models import (CostLevel, Itinerary, Leg, Location,
+                                       LocationType, Mode)
+    from datetime import timedelta
+    rome = Location("Rome", LocationType.CITY, 41.9028, 12.4964)
+    flor = Location("Florence", LocationType.CITY, 43.7696, 11.2558)
+
+    def flight_only(o, d, depart, timetable, **kw):
+        assert timetable is None                       # auto-sourced transit
+        leg = Leg(Mode.FLIGHT, rome, flor, 230.0, timedelta(hours=1),
+                  timedelta(0), CostLevel.MEDIUM)
+        return [Itinerary([leg], depart, 0.0)]
+
+    monkeypatch.setattr(service, "plan_trip", flight_only)
+    res = plan_response((41.9028, 12.4964), (43.7696, 11.2558),
+                        datetime(2026, 6, 26, 8, 0), None)
+    assert any("rail" in w.lower() for w in res["warnings"])
+
+
 def test_parse_depart_formats_and_default():
     default = datetime(2026, 7, 1, 8, 0)
     assert _parse_depart("", default) is default
