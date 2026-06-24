@@ -202,6 +202,37 @@ def test_dangling_service_id_trip_is_dropped(tmp_path):
     assert ConnectionScan(tt).query({"A": datetime(2026, 7, 1, 8, 0)}, "C") is None
 
 
+def test_parent_station_links_platform_so_station_has_departures(tmp_path):
+    """A trip stops at a PLATFORM under a parent STATION (GTFS station/platform
+    hierarchy). A query snapped to the station must still reach the train, via the
+    short station<->platform footpath the loader adds from parent_station."""
+    _write(tmp_path / "stops.txt", [
+        {"stop_id": "STN", "stop_name": "Hbf", "stop_lat": "46.90",
+         "stop_lon": "7.40", "location_type": "1", "parent_station": ""},
+        {"stop_id": "PLAT", "stop_name": "Hbf Gl.1", "stop_lat": "46.90",
+         "stop_lon": "7.40", "location_type": "0", "parent_station": "STN"},
+        {"stop_id": "DEST", "stop_name": "Dorf", "stop_lat": "46.30",
+         "stop_lon": "8.00", "location_type": "0", "parent_station": ""}])
+    _write(tmp_path / "routes.txt", [{"route_id": "R", "route_type": "2"}])
+    _write(tmp_path / "calendar.txt", [
+        {"service_id": "EVERY", "monday": "1", "tuesday": "1", "wednesday": "1",
+         "thursday": "1", "friday": "1", "saturday": "1", "sunday": "1",
+         "start_date": "20260101", "end_date": "20261231"}])
+    _write(tmp_path / "trips.txt",
+           [{"route_id": "R", "service_id": "EVERY", "trip_id": "T"}])
+    _write(tmp_path / "stop_times.txt", [
+        {"trip_id": "T", "stop_sequence": "1", "stop_id": "PLAT",
+         "arrival_time": "09:00:00", "departure_time": "09:00:00"},
+        {"trip_id": "T", "stop_sequence": "2", "stop_id": "DEST",
+         "arrival_time": "09:20:00", "departure_time": "09:20:00"}])
+    tt = load_timetable(str(tmp_path))
+    pairs = {(fp.from_stop, fp.to_stop) for fp in tt.footpaths}
+    assert ("STN", "PLAT") in pairs and ("PLAT", "STN") in pairs
+    j = ConnectionScan(tt).query({"STN": datetime(2026, 7, 1, 8, 50)}, "DEST")
+    assert j is not None
+    assert any(leg.trip_id == "T" for leg in j.legs)
+
+
 # --- loader robustness (review: real-world GTFS feed quirks) ----------------
 
 def _min_stops_routes(d):

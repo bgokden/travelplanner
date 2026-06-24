@@ -10,11 +10,18 @@ Footpaths are assumed transitively closed (a single relaxation step is applied
 per stop improvement).
 """
 
+import heapq
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from travelplanner.models import CostLevel, Mode
 from travelplanner.graph.scheduled.model import Connection, Footpath, Timetable
+
+# Longest walking chain kept when transitively closing footpaths. Changing
+# vehicles on foot over more than this is not a realistic transfer, and the cap
+# bounds the closure in a dense feed whose short transfers chain across a city
+# (without it the all-pairs closure explodes).
+_MAX_TRANSFER_CHAIN = timedelta(minutes=30)
 
 
 @dataclass(frozen=True)
@@ -58,42 +65,52 @@ class ConnectionScan:
         self.tt = timetable
         self.horizon = horizon
         # Transitively close footpaths so a single relaxation step per stop
-        # improvement is sufficient (the scan never re-relaxes a stop reached
-        # only by walking). The footpath graph is small.
+        # improvement is sufficient (the scan never re-relaxes a stop reached only
+        # by walking).
         self._fp_from = self._closed_footpaths(timetable)
+        # Materialized connections, memoized by (t0, t_end, conditions). One plan
+        # runs several scans (one per line-haul mode set, plus the egress query)
+        # over the SAME window, so materializing once and reusing it avoids
+        # repeating the expensive build on a dense feed.
+        self._conn_cache: dict = {}
 
     @staticmethod
     def _closed_footpaths(timetable: Timetable) -> dict[str, list[Footpath]]:
-        dist: dict[tuple[str, str], float] = {}
-        nodes: set[str] = set()
+        # Shortest walking time from each stop to the others reachable on foot, so
+        # the scan needs only a single relaxation step per improvement. Computed as
+        # a bounded Dijkstra from each stop over the (sparse) footpath graph: the
+        # footpaths form small local clusters, so this is far cheaper than an
+        # all-pairs Floyd-Warshall (O(V^3), which hangs on a dense urban feed).
+        # Chains longer than _MAX_TRANSFER_CHAIN are dropped (an unrealistic walk to
+        # transfer), which also bounds the work when transfers chain across a city.
+        adj: dict[str, list[tuple[str, float]]] = {}
         for fp in timetable.footpaths:
-            nodes.add(fp.from_stop)
-            nodes.add(fp.to_stop)
-            key = (fp.from_stop, fp.to_stop)
-            sec = fp.duration.total_seconds()
-            if key not in dist or sec < dist[key]:
-                dist[key] = sec
-        for k in nodes:
-            for i in nodes:
-                ik = dist.get((i, k))
-                if ik is None:
-                    continue
-                for j in nodes:
-                    if i == j:
-                        continue
-                    kj = dist.get((k, j))
-                    if kj is None:
-                        continue
-                    cand = ik + kj
-                    key = (i, j)
-                    if key not in dist or cand < dist[key]:
-                        dist[key] = cand
+            adj.setdefault(fp.from_stop, []).append(
+                (fp.to_stop, fp.duration.total_seconds()))
+        cap = _MAX_TRANSFER_CHAIN.total_seconds()
         out: dict[str, list[Footpath]] = {}
-        for (i, j), sec in dist.items():
-            if i == j:
-                continue
-            out.setdefault(i, []).append(
-                Footpath(i, j, timedelta(seconds=sec)))
+        for src in adj:
+            best: dict[str, float] = {src: 0.0}
+            pq: list[tuple[float, str]] = [(0.0, src)]
+            while pq:
+                d, u = heapq.heappop(pq)
+                if d > best[u]:
+                    continue                     # stale heap entry
+                for v, w in adj.get(u, ()):
+                    nd = d + w
+                    if nd <= cap and nd < best.get(v, cap + 1.0):
+                        best[v] = nd
+                        heapq.heappush(pq, (nd, v))
+            # A direct footpath the feed supplied is always honoured, even past the
+            # cap (the cap only limits how far walks are *chained*); take the better
+            # of the direct edge and any shorter composed path found above.
+            for v, w in adj[src]:
+                if w < best.get(v, w + 1.0):
+                    best[v] = w
+            fps = [Footpath(src, v, timedelta(seconds=sec))
+                   for v, sec in best.items() if v != src]
+            if fps:
+                out[src] = fps
         return out
 
     @staticmethod
@@ -138,7 +155,11 @@ class ConnectionScan:
         # Horizon is measured from each source's ready time, so the window end
         # tracks the latest source, not the earliest.
         t_end = max(sources.values()) + self.horizon
-        conns = self.tt.connections(t0, t_end, conditions)
+        cache_key = (t0, t_end, conditions)
+        conns = self._conn_cache.get(cache_key)
+        if conns is None:
+            conns = self.tt.connections(t0, t_end, conditions)
+            self._conn_cache[cache_key] = conns
 
         arr_foot: dict[str, datetime] = {}
         arr_veh: dict[str, datetime] = {}

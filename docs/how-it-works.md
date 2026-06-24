@@ -190,7 +190,13 @@ Time-of-day driving (road=True over a classified road):
 The examples above pass an explicit timetable to show the full setup. In practice
 you can omit it: `plan_trip` auto-composes one for the trip — the OpenFlights
 flight network plus the GTFS feed(s) selected by location from the Mobility
-Database catalog, downloaded and cached on first use.
+Database catalog, downloaded and cached on first use. A covering feed that fails to
+download or has no service in the trip corridor is skipped and the next is tried, so
+one dead catalog link does not leave the trip without ground transit. Rail feeds
+that model a station as a parent of its platforms route correctly — a coordinate
+snaps to the station and reaches the trains departing its platforms. Whether a train
+leads the results depends on the objective: door-to-door a short hop is often faster
+by car, so try `objective="greenest"` to surface the lower-driving option.
 
 ```python
 from travelplanner import plan_trip

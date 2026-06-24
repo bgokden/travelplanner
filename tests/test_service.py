@@ -75,6 +75,22 @@ def test_plan_response_rejects_unknown_objective():
         plan_response(o, d, dep, sample_timetable(), objective="nonsense")
 
 
+def test_plan_response_autocomposes_and_surfaces_notes(monkeypatch):
+    """With timetable=None the server asks plan_trip to auto-compose, and its
+    coverage notes (emitted as warnings) are surfaced in the response."""
+    import warnings
+    import travelplanner.service as service
+
+    def fake_plan_trip(o, d, depart, timetable, **kw):
+        assert timetable is None                       # asked to auto-compose
+        warnings.warn("feed 999 (X) unavailable: HTTP Error 404: Not Found")
+        return []
+
+    monkeypatch.setattr(service, "plan_trip", fake_plan_trip)
+    res = plan_response("52.0,4.0", "52.1,4.1", datetime(2026, 6, 24, 9, 0), None)
+    assert any("unavailable" in w for w in res["warnings"])
+
+
 def test_parse_depart_formats_and_default():
     default = datetime(2026, 7, 1, 8, 0)
     assert _parse_depart("", default) is default

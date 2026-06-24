@@ -278,9 +278,17 @@ class Timetable:
                 if not trip.validity.is_active(day, conditions):
                     continue
                 sts = trip.stop_times
-                run_id = f"{trip.id}@{iso}"
                 trip_zone = (self._trip_zone(sts[0].stop_id, default_tz)
                              if aware else None)
+                # Skip a run that departs entirely after the window: its first stop's
+                # departure already exceeds `end`, so no segment can be boarded
+                # (departures only increase). Cheap, and it keeps a short horizon from
+                # materializing a dense feed's whole day of later runs.
+                first_dep = (self._materialize(midnight, sts[0].departure, trip_zone)
+                             if aware else midnight + sts[0].departure)
+                if first_dep > end:
+                    continue
+                run_id = f"{trip.id}@{iso}"
                 segs: list[Connection] = []
                 boardable = False
                 for a, b in zip(sts, sts[1:]):
@@ -403,6 +411,22 @@ def clip_timetable(tt: Timetable, min_lat: float, min_lon: float,
         for sid in ids:
             if sid in tt.stops and sid not in out.stops:
                 out.stops[sid] = tt.stops[sid]
+    # Also keep in-box stops linked by footpath to a kept stop -- chiefly the
+    # parent station a kept platform belongs to (and its sibling platforms), which
+    # carries no trip of its own yet is what a coordinate snaps to. Without it the
+    # station's platform footpaths drop and rail routing breaks after clipping.
+    # The walk closure is restricted to in_box, so a footpath chain cannot drag in
+    # stops beyond the corridor and defeat the clip.
+    adj: dict[str, list[str]] = {}
+    for fp in tt.footpaths:
+        adj.setdefault(fp.from_stop, []).append(fp.to_stop)
+        adj.setdefault(fp.to_stop, []).append(fp.from_stop)
+    frontier = list(out.stops)
+    while frontier:
+        for nbr in adj.get(frontier.pop(), ()):
+            if nbr in in_box and nbr not in out.stops:
+                out.stops[nbr] = tt.stops[nbr]
+                frontier.append(nbr)
     out.footpaths = [fp for fp in tt.footpaths
                      if fp.from_stop in out.stops and fp.to_stop in out.stops]
     return out

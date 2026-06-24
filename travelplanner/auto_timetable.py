@@ -34,6 +34,13 @@ def _load_feed(feed: Feed) -> Timetable:
 # corridor (~0.6 deg ~= 65 km), enough to keep access stops and a realistic route.
 _CORRIDOR_MARGIN_DEG = 0.6
 
+# How many covering feeds to fetch before giving up, when looking for ones that
+# carry corridor service. Bounds the cold-start cost: a dead catalog URL or a feed
+# whose stops fall outside the corridor is skipped and the next tried, but the scan
+# stops after this many fetches rather than downloading a long tail of national
+# feeds (each parse is the slow step).
+_MAX_FEED_ATTEMPTS = 4
+
 # Only airports within this distance of an endpoint can serve the trip; scoping
 # the synthetic flight network to them keeps the scan fast (the full global
 # network is ~44k synthetic flights).
@@ -96,13 +103,28 @@ def build_default_timetable(origin, dest, *, download: bool = True,
             notes.append("no GTFS feed in the catalog covers this trip "
                          "(ground transit may be missing here)")
         bbox = _corridor_bbox([o, d], _CORRIDOR_MARGIN_DEG)
-        for feed in feeds[:max_feeds]:
+        # Walk the covering feeds (smallest box first) and merge up to max_feeds
+        # that actually carry service in the trip corridor. A feed that fails to
+        # download (a dead catalog URL) or clips to nothing is skipped and the next
+        # tried, so one bad feed no longer leaves the trip with no ground transit;
+        # _MAX_FEED_ATTEMPTS bounds the cold-start fetch cost.
+        merged = attempts = 0
+        for feed in feeds:
+            if merged >= max_feeds or attempts >= _MAX_FEED_ATTEMPTS:
+                break
+            attempts += 1
             try:
                 full = _load_feed(feed)
             except (OSError, zipfile.BadZipFile, ValueError) as exc:
                 notes.append(f"feed {feed.id} ({feed.name}) unavailable: {exc}")
                 continue
-            parts.append(clip_timetable(full, *bbox))
+            clipped = clip_timetable(full, *bbox)
+            if not clipped.trips:
+                notes.append(f"feed {feed.id} ({feed.name}) has no service in the "
+                             "trip corridor")
+                continue
+            parts.append(clipped)
+            merged += 1
 
     # A tz-less ground feed joined to the tz-aware flight network gets each of its
     # stops the nearest located zone, instead of the table's most-common one.

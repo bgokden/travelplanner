@@ -7,6 +7,18 @@ All notable changes to this project are documented here. The format is based on
 ## [Unreleased]
 
 ### Added
+- Ground transit in door-to-door planning, end to end. The GTFS loader honours
+  station/platform hierarchy (`parent_station`): a trip departs a platform, but a
+  coordinate snaps to the station, so the loader links the two with a short footpath
+  (and the scan's footpath closure reaches sibling platforms) -- without it a snapped
+  station carried no departures and rail silently returned nothing. Feed selection is
+  robust to the Mobility Database's dead links and coincidental bbox matches: a
+  covering feed that fails to download or carries no service in the trip corridor is
+  skipped and the next tried (bounded), instead of one bad feed leaving the trip with
+  no ground transit. The demo web service gains a "trains & buses" toggle that
+  auto-composes a trip-scoped timetable (flights + covering GTFS feeds) per request
+  and surfaces the coverage notes. Whether a train tops the list still depends on the
+  objective -- door-to-door a short hop is often faster by car (try `greenest`).
 - Approximate fare estimates. A pluggable, always-on fare model
   (`travelplanner.fares`) prices each leg from a distance-and-mode heuristic, so
   every `Itinerary`/`Leg` carries `fare_estimate`/`fare_currency` (in `to_dict()`
@@ -264,6 +276,15 @@ All notable changes to this project are documented here. The format is based on
   than failing, so a network blip never breaks an otherwise-usable cache.
 
 ### Fixed
+- Footpath transitive closure no longer hangs on a dense feed. It was an all-pairs
+  Floyd-Warshall (O(V^3)) assuming a small footpath graph, but a city-scale GTFS feed
+  has tens of thousands of footpath nodes, so building the scan hung. It is now a
+  bounded per-source Dijkstra over the (sparse) footpath graph -- dropping only
+  unrealistically long composed walking chains while always honouring direct
+  feed-supplied transfers -- so a dense metro plans in seconds instead of hanging.
+  Connections are also materialized once per scan window (memoized) instead of
+  rebuilt for each line-haul mode set and egress query, and a run whose first
+  departure is past the window is skipped without materializing its segments.
 - Geofabrik geometry catalog: `refresh=True` now re-downloads the index on every
   call instead of being memoized by an `lru_cache` keyed on the flag (which had
   re-fetched only the first time and then returned the stale cached copy). The

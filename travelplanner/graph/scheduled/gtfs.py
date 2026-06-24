@@ -160,6 +160,11 @@ def load_timetable(feed_dir: str) -> Timetable:
     tt = Timetable()
 
     feed_tz = _feed_timezone(feed_dir)
+    # GTFS models a station as a parent (location_type 1) of its platforms; trips
+    # stop at the platforms, but a coordinate snaps to whichever stop is nearest
+    # (often the station). Record each child's parent so the two can be linked by
+    # a short footpath below, otherwise the snapped station shows no departures.
+    parent_of: list[tuple[str, str]] = []
     for r in _rows(os.path.join(feed_dir, "stops.txt")):
         lat = _to_float(r.get("stop_lat") or "0")
         lon = _to_float(r.get("stop_lon") or "0")
@@ -173,6 +178,9 @@ def load_timetable(feed_dir: str) -> Timetable:
             type=NodeType.RAIL_STATION,
             tz=stop_tz,
         ))
+        parent = (r.get("parent_station") or "").strip()
+        if parent:
+            parent_of.append((r["stop_id"], parent))
 
     route_mode: dict[str, Mode] = {}
     for r in _rows(os.path.join(feed_dir, "routes.txt")):
@@ -230,8 +238,32 @@ def load_timetable(feed_dir: str) -> Timetable:
             continue   # skip a trip with non-monotonic stop_times (invalid data)
 
     _apply_transfers(tt, feed_dir)
+    _link_platforms_to_stations(tt, parent_of)
     _apply_frequencies(tt, feed_dir)
     return tt
+
+
+def _link_platforms_to_stations(tt: Timetable,
+                                parent_of: list[tuple[str, str]]) -> None:
+    """Add a short footpath each way between a platform (or other child stop) and
+    its parent station, so a trip boardable only at the platform is reachable from
+    the station a coordinate snaps to -- and, via the scan's transitive footpath
+    closure, between sibling platforms of the same station.
+
+    GTFS puts trips at platforms (location_type 0) under a parent station
+    (location_type 1); without this link the station node carries no departures
+    and rail routing silently finds nothing. The walk is the inter-stop distance
+    floored to a short minimum (station and platform are usually co-located). A
+    child or parent absent from stops.txt is skipped, mirroring transfers.txt.
+    """
+    for child, parent in parent_of:
+        if child not in tt.stops or parent not in tt.stops:
+            continue
+        dur = _transfer_walk_time(tt.stops[child], tt.stops[parent])
+        if dur <= timedelta():
+            dur = _MIN_INTER_STOP_TRANSFER
+        tt.add_footpath(child, parent, dur)
+        tt.add_footpath(parent, child, dur)
 
 
 # Walking speed for an inter-stop transfer whose row gives no minimum time: the

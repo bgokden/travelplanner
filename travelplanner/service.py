@@ -22,6 +22,7 @@ import argparse
 import json
 import os
 import time
+import warnings as warnings_mod
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlparse
@@ -197,7 +198,7 @@ def _parse_depart(value, default: datetime) -> datetime:
     raise ValueError(f"could not parse depart time {value!r} (use YYYY-MM-DDTHH:MM)")
 
 
-def plan_response(origin, dest, depart_at: datetime, timetable, *,
+def plan_response(origin, dest, depart_at: datetime, timetable=None, *,
                   objective: str = "air_priority", top_n: int = 3,
                   access: str = "car", road: bool = False,
                   region: str | None = None, data_dir: str | None = None,
@@ -206,15 +207,22 @@ def plan_response(origin, dest, depart_at: datetime, timetable, *,
 
     Mirrors plan_trip's arguments; each ranked itinerary is returned with its
     JSON fields plus `segments` -- one coloured polyline per leg. With road=True
-    and a resolvable region, car legs carry their real routed geometry.
+    and a resolvable region, car legs carry their real routed geometry. With
+    timetable=None, plan_trip auto-composes a timetable for the trip (flight
+    network plus covering GTFS feeds); its coverage notes are surfaced as warnings.
     """
     obj = Objective(objective)
     o = _coerce(origin, geocoder=geocoder)
     d = _coerce(dest, geocoder=geocoder)
-    itineraries = plan_trip(o, d, depart_at, timetable, objective=obj, top_n=top_n,
-                            access=access, road=road, turn_aware=turn_aware,
-                            region=region, data_dir=data_dir, geocoder=geocoder)
-    warnings: list = []
+    # Capture plan_trip's auto-compose notes (coverage gaps, feeds that could not
+    # be fetched) so a missing-transit outcome reads as honest, not broken.
+    with warnings_mod.catch_warnings(record=True) as caught:
+        warnings_mod.simplefilter("always")
+        itineraries = plan_trip(o, d, depart_at, timetable, objective=obj,
+                                top_n=top_n, access=access, road=road,
+                                turn_aware=turn_aware, region=region,
+                                data_dir=data_dir, geocoder=geocoder)
+    warnings: list = [str(w.message) for w in caught]
     options = []
     for it in itineraries:
         opt = it.to_dict(with_legs=True)
@@ -340,6 +348,7 @@ _UI_HTML = """<!doctype html><html><head><meta charset="utf-8">
   <label>Options</label>
   <input id="top" type="number" min="1" max="9" value="3">
   <label class="chk"><input type="checkbox" id="road"> real streets (car legs, auto-downloads map data)</label>
+  <label class="chk"><input type="checkbox" id="transit"> trains &amp; buses (auto-downloads schedule data; first run slower)</label>
   <button id="go">Plan trip</button>
   <button id="ex" class="alt">Load example</button>
   <div id="status"></div>
@@ -506,10 +515,11 @@ async function plan(){
   const p = new URLSearchParams({origin, dest, objective:$('objective').value,
     access:$('access').value, top:$('top').value, depart:$('depart').value});
   if($('road').checked) p.set('road','1');   // region auto-resolved from the coordinates
+  if($('transit').checked) p.set('transit','1');
   const btn = $('go'), label = btn.textContent;
   btn.disabled = true; btn.textContent = 'Planning...';
-  setStatus($('road').checked
-    ? 'Planning... real streets downloads map data for new areas, so the first request for a region can take a minute.'
+  setStatus($('road').checked || $('transit').checked
+    ? 'Planning... downloading map/schedule data for new areas, so the first request for a region can take a minute.'
     : 'Planning...');
   try {
     const r = await fetch('/api/plan?'+p.toString());
@@ -595,8 +605,13 @@ class _Handler(BaseHTTPRequestHandler):
             depart_at = _parse_depart(first("depart"), srv.default_depart)
             top_n = max(1, min(9, int(first("top", "3"))))
             road = first("road", "") in ("1", "true", "yes", "on")
+            transit = first("transit", "") in ("1", "true", "yes", "on")
+            # transit on -> auto-compose a trip-scoped timetable (flight network +
+            # covering GTFS feeds) so trains/buses appear; off -> the prebuilt
+            # flight-only feed (fast, no per-request feed download).
+            timetable = None if transit else srv.timetable
             response = plan_response(
-                origin, dest, depart_at, srv.timetable,
+                origin, dest, depart_at, timetable,
                 objective=first("objective", "air_priority"),
                 access=first("access", "car"), top_n=top_n, road=road,
                 region=(first("region") or srv.region), data_dir=srv.data_dir,

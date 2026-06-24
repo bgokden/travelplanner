@@ -56,6 +56,48 @@ def test_notes_when_feed_fetch_fails(monkeypatch):
     assert any("unavailable" in n for n in notes)
 
 
+def test_skips_dead_feed_and_uses_next_covering_feed(monkeypatch):
+    """A feed whose download fails (a dead catalog URL) must not leave the trip with
+    no ground transit: the next covering feed is tried instead."""
+    dead = _feed("1", 52.2, 4.7, 52.5, 5.0)            # smaller bbox -> tried first
+    good = _feed("2", 52.0, 4.0, 53.0, 5.0)            # larger bbox -> tried next
+    monkeypatch.setattr(auto_timetable, "catalog", lambda: {"1": dead, "2": good})
+
+    def load(f):
+        if f.id == "1":
+            raise OSError("dead url")
+        return _ground_tt()
+
+    monkeypatch.setattr(auto_timetable, "_load_feed", load)
+    tt, notes = auto_timetable.build_default_timetable(O, D, air=False)
+    assert "GT" in tt.trips                             # reached the working feed
+    assert any("unavailable" in n for n in notes)       # noted the dead one
+
+
+def test_skips_feed_with_no_corridor_service(monkeypatch):
+    """A feed whose bbox covers the trip but whose stops fall outside the corridor
+    contributes nothing; it is skipped (not counted) and the next feed is tried."""
+    off = _feed("1", 52.2, 4.7, 52.5, 5.0)             # tried first, stops are far
+    good = _feed("2", 52.0, 4.0, 53.0, 5.0)            # tried next, serves corridor
+    monkeypatch.setattr(auto_timetable, "catalog", lambda: {"1": off, "2": good})
+
+    def load(f):
+        if f.id == "1":
+            far = Timetable()
+            far.add_stop(Stop("FA", "FA", 10.0, 10.0))
+            far.add_stop(Stop("FB", "FB", 10.1, 10.1))
+            far.add_trip(make_trip("FAR", Mode.TRAIN, [
+                ("FA", "09:00", "09:00"), ("FB", "09:20", "09:20")]))
+            return far
+        return _ground_tt()
+
+    monkeypatch.setattr(auto_timetable, "_load_feed", load)
+    tt, notes = auto_timetable.build_default_timetable(O, D, air=False)
+    assert "GT" in tt.trips                             # reached the serving feed
+    assert "FAR" not in tt.trips                        # off-corridor feed skipped
+    assert any("no service in the trip corridor" in n for n in notes)
+
+
 def test_includes_air_scoped_to_nearby_airports(monkeypatch):
     monkeypatch.setattr(auto_timetable, "catalog", lambda: {})
     monkeypatch.setattr(auto_timetable, "airports_near",

@@ -374,6 +374,29 @@ def test_clip_timetable_keeps_corridor_trips_whole():
     assert "F1" not in clipped.stops and "F2" not in clipped.stops
 
 
+def test_clip_timetable_keeps_parent_station_linked_to_kept_platform():
+    """A parent station carries no trip of its own (trips stop at its platform), so
+    clipping by trip-referenced stops alone would drop it and break a station-snapped
+    query. The in-corridor station and its footpaths must survive; a far stop linked
+    only by footpath must NOT be dragged in (the clip stays bounded to the box)."""
+    from travelplanner.graph.scheduled import clip_timetable
+    tt = Timetable()
+    tt.add_stop(Stop("STN", "Hbf", 47.0, 8.0))         # parent station, no trips
+    tt.add_stop(Stop("PLAT", "Hbf Gl.1", 47.0, 8.0))   # platform, in corridor
+    tt.add_stop(Stop("B", "B", 47.2, 8.1))             # in corridor
+    tt.add_stop(Stop("FAR", "Far", 10.0, 10.0))        # outside the box
+    tt.add_footpath("STN", "PLAT", timedelta(minutes=1))
+    tt.add_footpath("PLAT", "STN", timedelta(minutes=1))
+    tt.add_footpath("B", "FAR", timedelta(minutes=2))  # footpath chain leaving the box
+    tt.add_trip(make_trip("T", Mode.TRAIN, [
+        ("PLAT", "09:00", "09:00"), ("B", "09:30", "09:30")]))
+    clipped = clip_timetable(tt, 46.5, 7.5, 47.5, 8.5)
+    assert "STN" in clipped.stops                      # parent station kept...
+    assert {("STN", "PLAT"), ("PLAT", "STN")} <= {
+        (fp.from_stop, fp.to_stop) for fp in clipped.footpaths}   # ...with its links
+    assert "FAR" not in clipped.stops                  # not dragged in past the box
+
+
 def test_earlier_vehicle_arrival_never_breaks_reachability():
     """Monotonicity invariant the by_trip domination bug violated: adding a run
     that reaches an intermediate stop EARLIER by vehicle must never make a
