@@ -34,12 +34,19 @@ def _load_feed(feed: Feed) -> Timetable:
 # corridor (~0.6 deg ~= 65 km), enough to keep access stops and a realistic route.
 _CORRIDOR_MARGIN_DEG = 0.6
 
-# How many covering feeds to fetch before giving up, when looking for ones that
-# carry corridor service. Bounds the cold-start cost: a dead catalog URL or a feed
-# whose stops fall outside the corridor is skipped and the next tried, but the scan
-# stops after this many fetches rather than downloading a long tail of national
-# feeds (each parse is the slow step).
+# How many covering feeds to fetch before giving up. Bounds the cold-start cost: a
+# dead catalog URL or a feed whose stops fall outside the corridor is skipped and the
+# next tried, but the scan stops after this many fetches rather than downloading a
+# long tail of national feeds (each parse is the slow step).
 _MAX_FEED_ATTEMPTS = 4
+
+# Stop merging feeds once the corridor-clipped trip count reaches this. Several
+# covering feeds are merged (not just the smallest-box one) because a sparse
+# long-distance operator can have a smaller bounding box than the dense national
+# feed that actually carries the through-service -- ranking by box alone picks the
+# sparse feed and misses the real train. The budget keeps the merged timetable
+# plannable; the first contributing feed is always taken even if it alone exceeds it.
+_MAX_MERGED_TRIPS = 80000
 
 # Only airports within this distance of an endpoint can serve the trip; scoping
 # the synthetic flight network to them keeps the scan fast (the full global
@@ -61,14 +68,16 @@ def _corridor_bbox(points, margin: float):
 
 
 def build_default_timetable(origin, dest, *, download: bool = True,
-                            max_feeds: int = 1, air: bool = True,
+                            air: bool = True,
                             ground: bool = True) -> tuple[Timetable, list[str]]:
     """Compose (Timetable, notes) for this trip with no feed supplied.
 
-    Merges the flight network with up to `max_feeds` catalog feeds covering both
-    endpoints (smallest box first), each clipped to the trip corridor so a
-    national feed does not blow up the scan. `notes` records coverage gaps and any
-    feed that could not be fetched, for the caller to surface.
+    Merges the flight network with the catalog feeds covering both endpoints
+    (smallest box first), each clipped to the trip corridor, accumulating them up to
+    a trip-count budget so the dense feed carrying the through-service is included
+    alongside any sparse small-box one -- not just the single smallest box, which
+    can be a sparse long-distance operator that misses the real train. `notes`
+    records coverage gaps and any feed that could not be fetched.
     """
     o = (origin.lat, origin.lon)
     d = (dest.lat, dest.lon)
@@ -103,14 +112,16 @@ def build_default_timetable(origin, dest, *, download: bool = True,
             notes.append("no GTFS feed in the catalog covers this trip "
                          "(ground transit may be missing here)")
         bbox = _corridor_bbox([o, d], _CORRIDOR_MARGIN_DEG)
-        # Walk the covering feeds (smallest box first) and merge up to max_feeds
-        # that actually carry service in the trip corridor. A feed that fails to
-        # download (a dead catalog URL) or clips to nothing is skipped and the next
-        # tried, so one bad feed no longer leaves the trip with no ground transit;
-        # _MAX_FEED_ATTEMPTS bounds the cold-start fetch cost.
-        merged = attempts = 0
+        # Walk the covering feeds (smallest box first) and merge the ones carrying
+        # corridor service, accumulating to a trip-count budget rather than stopping
+        # at the single smallest box -- so a dense national feed (the one with the
+        # real through-train) is included even when a sparse small-box operator ranks
+        # ahead of it. A feed that fails to download (a dead catalog URL) or clips to
+        # nothing is skipped and the next tried; _MAX_FEED_ATTEMPTS bounds the
+        # cold-start fetch cost and the budget bounds the merged scan.
+        merged_trips = attempts = 0
         for feed in feeds:
-            if merged >= max_feeds or attempts >= _MAX_FEED_ATTEMPTS:
+            if attempts >= _MAX_FEED_ATTEMPTS:
                 break
             attempts += 1
             try:
@@ -123,8 +134,13 @@ def build_default_timetable(origin, dest, *, download: bool = True,
                 notes.append(f"feed {feed.id} ({feed.name}) has no service in the "
                              "trip corridor")
                 continue
+            # Always take the first contributing feed (merged_trips == 0); after that
+            # stop once adding one would exceed the budget (keeps the merged timetable
+            # plannable). merged_trips, not parts, since parts already holds flights.
+            if merged_trips and merged_trips + len(clipped.trips) > _MAX_MERGED_TRIPS:
+                break
             parts.append(clipped)
-            merged += 1
+            merged_trips += len(clipped.trips)
 
     # A tz-less ground feed joined to the tz-aware flight network gets each of its
     # stops the nearest located zone, instead of the table's most-common one.

@@ -12,10 +12,14 @@ All notable changes to this project are documented here. The format is based on
   coordinate snaps to the station, so the loader links the two with a short footpath
   (and the scan's footpath closure reaches sibling platforms) -- without it a snapped
   station carried no departures and rail silently returned nothing. Feed selection is
-  robust to the Mobility Database's dead links and coincidental bbox matches: a
-  covering feed that fails to download or carries no service in the trip corridor is
-  skipped and the next tried (bounded), instead of one bad feed leaving the trip with
-  no ground transit. The demo web service gains a "trains & buses" toggle that
+  robust to the Mobility Database's dead links and to ranking by bounding box: a
+  covering feed that fails to download or carries no corridor service is skipped, and
+  rather than merging only the single smallest-box feed (which can be a sparse
+  long-distance operator that lacks the real through-train), several covering feeds
+  are merged up to a trip-count budget -- so the dense national feed carrying the
+  service is included (e.g. Amsterdam->Berlin now surfaces the ~8h IC instead of a
+  garbage 46h chain), bounded so the merged scan stays fast. The demo web service
+  gains a "trains & buses" toggle that
   auto-composes a trip-scoped timetable (flights + covering GTFS feeds) per request
   and surfaces the coverage notes. Whether a train tops the list still depends on the
   objective -- door-to-door a short hop is often faster by car (try `greenest`).

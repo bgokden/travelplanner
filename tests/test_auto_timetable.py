@@ -98,6 +98,30 @@ def test_skips_feed_with_no_corridor_service(monkeypatch):
     assert any("no service in the trip corridor" in n for n in notes)
 
 
+def test_merges_dense_feed_alongside_sparse_small_box_feed(monkeypatch):
+    """A sparse operator with a smaller bounding box must not shadow the dense feed
+    that carries the real through-service: both are merged (within the budget), so
+    the planner sees the dense feed's connection, not just the smallest-box one."""
+    far_o = Location("O", LocationType.CITY, 52.37, 4.90)   # Amsterdam-ish
+    far_d = Location("D", LocationType.CITY, 52.50, 13.40)  # Berlin-ish
+    sparse = _feed("sparse", 52.0, 4.0, 53.0, 14.0)         # smaller box -> first
+    dense = _feed("dense", 51.0, 3.0, 54.0, 15.0)           # bigger box -> second
+    monkeypatch.setattr(auto_timetable, "catalog",
+                        lambda: {"sparse": sparse, "dense": dense})
+
+    def load(f):
+        tt = Timetable()
+        tt.add_stop(Stop("A", "A", 52.37, 4.90))
+        tt.add_stop(Stop("Z", "Z", 52.50, 13.40))
+        tt.add_trip(make_trip("SPARSE" if f.id == "sparse" else "DENSE", Mode.TRAIN,
+                              [("A", "09:00", "09:00"), ("Z", "15:00", "15:00")]))
+        return tt
+
+    monkeypatch.setattr(auto_timetable, "_load_feed", load)
+    tt, notes = auto_timetable.build_default_timetable(far_o, far_d, air=False)
+    assert "SPARSE" in tt.trips and "DENSE" in tt.trips   # both, not just smallest box
+
+
 def test_includes_air_scoped_to_nearby_airports(monkeypatch):
     monkeypatch.setattr(auto_timetable, "catalog", lambda: {})
     monkeypatch.setattr(auto_timetable, "airports_near",
