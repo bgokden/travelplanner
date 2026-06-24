@@ -71,6 +71,28 @@ _SAMPLE_EXAMPLE = {"origin": "47.00,7.005", "dest": "45.00,9.01"}
 # Above this stop count a feed is the real flight network, not the tiny sample.
 _FLIGHT_NETWORK_MIN_STOPS = 50
 
+# Curated, selectable example trips for the demo, by feed source. The flight feed
+# (online) routes real city pairs; the rail ones set the trains & buses toggle so a
+# trip-scoped timetable is auto-composed. The sample feed (offline) only routes its
+# own canonical coords, but it carries both a flight and a train, so it can still show
+# the preset difference. Each entry is a label plus the form fields a click fills in.
+_FLIGHT_EXAMPLES = [
+    {"label": "Amsterdam to Berlin by train", "origin": "Amsterdam", "dest": "Berlin",
+     "prefer": "train", "transit": True},
+    {"label": "Munich to Salzburg by transit", "origin": "Munich", "dest": "Salzburg",
+     "prefer": "transit", "transit": True},
+    {"label": "London to New York", "origin": "London", "dest": "New York",
+     "prefer": "fastest", "transit": False},
+    {"label": "Madrid to Santorini", "origin": "Madrid", "dest": "Santorini",
+     "prefer": "fastest", "transit": False},
+]
+_SAMPLE_EXAMPLES = [
+    {"label": "Sample: fastest", "origin": "47.00,7.005", "dest": "45.00,9.01",
+     "prefer": "fastest", "transit": False},
+    {"label": "Sample: by train", "origin": "47.00,7.005", "dest": "45.00,9.01",
+     "prefer": "train", "transit": False},
+]
+
 
 def _default_timetable(online: bool):
     """The demo's default feed: the real OpenFlights flight network (so air
@@ -384,6 +406,15 @@ _UI_HTML = """<!doctype html><html><head><meta charset="utf-8">
    background:#edf2f7;color:#2b6cb0;border:1px solid #cbd5e0;border-radius:11px;
    font:inherit;font-size:11px;font-weight:600;cursor:pointer}
  .sortbar .lab:hover{background:#e2e8f0}
+ .examples{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
+ .examples .ex{width:auto;padding:5px 10px;margin:0;background:#edf2f7;color:#2b6cb0;
+   border:1px solid #cbd5e0;border-radius:13px;font:inherit;font-size:12px;
+   font-weight:600;cursor:pointer}
+ .examples .ex:hover{background:#e2e8f0}
+ .legend{background:rgba(255,255,255,.92);padding:6px 9px;border-radius:6px;
+   box-shadow:0 1px 5px rgba(0,0,0,.2);font-size:11px;line-height:1.7;color:#4a5568}
+ .legend span{display:flex;align-items:center;gap:6px}
+ .legend i{width:14px;height:4px;border-radius:2px;display:inline-block}
  .leg{font-size:12px;color:#4a5568;margin-top:3px}
  .sw{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;
    vertical-align:middle}
@@ -418,7 +449,8 @@ _UI_HTML = """<!doctype html><html><head><meta charset="utf-8">
   <label class="chk"><input type="checkbox" id="road"> real streets (car legs, auto-downloads map data)</label>
   <label class="chk"><input type="checkbox" id="transit"> trains &amp; buses (auto-downloads schedule data; first run slower)</label>
   <button id="go">Plan trip</button>
-  <button id="ex" class="alt">Load example</button>
+  <label>Examples</label>
+  <div id="examples" class="examples"></div>
   <div id="status"></div>
   <div id="results"></div>
   <div class="foot">Suggestions: bundled cities, airports, feed stations &amp;
@@ -431,6 +463,17 @@ const colors = MODE_COLORS_JSON;
 const map = L.map('map').setView([47,8], 5);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
   {maxZoom:19, attribution:'&copy; OpenStreetMap'}).addTo(map);
+
+// Mode-colour legend so the route lines are readable at a glance.
+const legend = L.control({position:'bottomright'});
+legend.onAdd = () => {
+  const div = L.DomUtil.create('div', 'legend');
+  div.innerHTML = ['walk','car','train','ferry','flight']
+    .filter(m => colors[m])
+    .map(m => '<span><i style="background:'+colors[m]+'"></i>'+m+'</span>').join('');
+  return div;
+};
+legend.addTo(map);
 let drawn = [];
 const selected = {};                 // inputId -> {label, lat, lon}
 
@@ -515,6 +558,30 @@ attachAC('origin'); attachAC('dest');
 // --- map + results --------------------------------------------------------
 function clearMap(){ drawn.forEach(l => map.removeLayer(l)); drawn = []; }
 
+// Points along the great circle from a to b ([lat,lon] each), so a flight is drawn
+// as the arc it actually flies rather than a straight Mercator line. Longitudes are
+// unwrapped to stay continuous, so a route crossing the date line does not streak.
+function greatCircle(a, b, n){
+  const R = Math.PI/180, D = 180/Math.PI;
+  const la1=a[0]*R, lo1=a[1]*R, la2=b[0]*R, lo2=b[1]*R;
+  const sdLa=Math.sin((la2-la1)/2), sdLo=Math.sin((lo2-lo1)/2);
+  const h = sdLa*sdLa + Math.cos(la1)*Math.cos(la2)*sdLo*sdLo;
+  const d = 2*Math.asin(Math.min(1, Math.sqrt(h)));      // angular distance
+  if(d === 0) return [a, b];
+  const pts = []; let prevLon = null;
+  for(let i=0;i<=n;i++){
+    const f=i/n, A=Math.sin((1-f)*d)/Math.sin(d), B=Math.sin(f*d)/Math.sin(d);
+    const x=A*Math.cos(la1)*Math.cos(lo1)+B*Math.cos(la2)*Math.cos(lo2);
+    const y=A*Math.cos(la1)*Math.sin(lo1)+B*Math.cos(la2)*Math.sin(lo2);
+    const z=A*Math.sin(la1)+B*Math.sin(la2);
+    let lon=Math.atan2(y,x)*D;
+    if(prevLon !== null){ while(lon-prevLon>180) lon-=360; while(lon-prevLon<-180) lon+=360; }
+    prevLon = lon;
+    pts.push([Math.atan2(z, Math.sqrt(x*x+y*y))*D, lon]);
+  }
+  return pts;
+}
+
 function drawOption(data, idx){
   clearMap();
   const opt = data.options[idx], grp = [];
@@ -523,7 +590,10 @@ function drawOption(data, idx){
     const estimate = s.coords.length <= 2 && (s.mode === 'car' || s.mode === 'walk');
     const style = {color:s.color, weight:6, opacity: estimate ? 0.65 : 0.85};
     if(estimate) style.dashArray = '8,8';
-    const line = L.polyline(s.coords, style).addTo(map);
+    // a flight follows a great-circle arc, not the straight line between its airports
+    const coords = (s.mode === 'flight' && s.coords.length === 2)
+      ? greatCircle(s.coords[0], s.coords[1], 48) : s.coords;
+    const line = L.polyline(coords, style).addTo(map);
     line.bindPopup(s.label + (estimate ? ' (straight-line estimate)' : ''));
     drawn.push(line); grp.push(line);
   });
@@ -622,17 +692,30 @@ async function plan(){
   finally { btn.disabled = false; btn.textContent = label; }
 }
 
-async function loadExample(){
+function applyExample(ex){
+  delete selected.origin; delete selected.dest;
+  $('origin').value = ex.origin; $('dest').value = ex.dest;
+  if(ex.depart) $('depart').value = ex.depart;
+  if(ex.prefer) $('prefer').value = ex.prefer;        // does not persist; an example is a one-off
+  $('transit').checked = !!ex.transit;                // rail examples need the schedule data
+  plan();
+}
+
+async function loadExamples(){
   try {
-    const r = await fetch('/api/example'); const ex = await r.json();
-    delete selected.origin; delete selected.dest;
-    $('origin').value = ex.origin; $('dest').value = ex.dest; $('depart').value = ex.depart;
-    plan();
-  } catch(e){ setStatus('Could not load example: '+e, true); }
+    const r = await fetch('/api/examples'); const data = await r.json();
+    const box = $('examples'); box.innerHTML = '';
+    (data.examples || []).forEach(ex => {
+      const b = document.createElement('button'); b.className = 'ex';
+      b.textContent = ex.label; b.title = 'Load this example trip';
+      b.onclick = () => applyExample(ex);
+      box.appendChild(b);
+    });
+  } catch(e){ console.warn('examples unavailable:', e); }  // optional row; degrade quietly
 }
 
 $('go').onclick = plan;
-$('ex').onclick = loadExample;
+loadExamples();
 
 // Remember the transport preference across visits (set once, it sticks). Guarded:
 // localStorage can throw in private modes, which must not break the page.
@@ -677,6 +760,10 @@ class _Handler(BaseHTTPRequestHandler):
             example = dict(self.server.example)
             example["depart"] = self.server.default_depart.strftime("%Y-%m-%dT%H:%M")
             self._json(example)
+        elif path == "/api/examples":
+            depart = self.server.default_depart.strftime("%Y-%m-%dT%H:%M")
+            examples = [dict(ex, depart=depart) for ex in self.server.examples]
+            self._json({"examples": examples})
         elif path == "/api/geocode":
             self._handle_geocode(parse_qs(parsed.query))
         elif path == "/api/plan":
@@ -765,6 +852,7 @@ def make_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT, *,
     server.online = online
     server.user_agent = user_agent
     server.example = _CITY_EXAMPLE if source == "flights" else _SAMPLE_EXAMPLE
+    server.examples = _FLIGHT_EXAMPLES if source == "flights" else _SAMPLE_EXAMPLES
     try:
         server.airports = load_airports(download=online)   # cached OpenFlights airports
     except (FileNotFoundError, ValueError, OSError):

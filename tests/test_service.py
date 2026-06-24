@@ -396,6 +396,18 @@ def test_http_endpoints_end_to_end():
         ex_plan = json.loads(_get(base, "/api/plan?" + ex_query)[1])
         assert ex_plan["options"], "the demo's own example must produce a route"
 
+        # selectable examples: a list, each carrying the form fields and routable
+        status, body = _get(base, "/api/examples")
+        examples = json.loads(body)["examples"]
+        assert status == 200 and examples
+        ex0 = examples[0]
+        assert {"label", "origin", "dest", "depart", "prefer", "transit"} <= set(ex0)
+        ex0_query = urllib.parse.urlencode({
+            "origin": ex0["origin"], "dest": ex0["dest"], "depart": ex0["depart"],
+            "prefer": ex0["prefer"], "top": "1"})
+        ex0_plan = json.loads(_get(base, "/api/plan?" + ex0_query)[1])
+        assert ex0_plan["options"], "each offered example must produce a route"
+
         # autocomplete (offline server -> bundled cities; sample feed stations)
         status, body = _get(base, "/api/geocode?q=amsterd")
         sugg = json.loads(body)["suggestions"]

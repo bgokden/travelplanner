@@ -23,6 +23,11 @@ All notable changes to this project are documented here. The format is based on
   `plan_trip_choices` / `plan_labeled` -- one best option per objective, deduped so a
   trip that wins several keeps all its labels, generated from one candidate pool so the
   labelled view costs about one ordinary plan.
+- Demo usability: a row of selectable example trips (e.g. Amsterdam to Berlin by
+  train, London to New York, Madrid to Santorini) that fill the origin/destination,
+  preference, and rail toggle in one click (`/api/examples`); flight legs drawn as
+  true great-circle arcs, so a long-haul flight curves the way it actually flies
+  instead of a straight Mercator line (date-line safe); and a mode-colour map legend.
 - Ground transit in door-to-door planning, end to end. The GTFS loader honours
   station/platform hierarchy (`parent_station`): a trip departs a platform, but a
   coordinate snaps to the station, so the loader links the two with a short footpath
