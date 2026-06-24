@@ -14,6 +14,8 @@ from datetime import datetime
 from urllib.error import URLError
 
 from travelplanner import place, plan, plan_trip, Objective
+from travelplanner.trips import plan_trip_choices, preference_kwargs
+from travelplanner.samples import sample_timetable, sample_trip
 from travelplanner.models import CostLevel, LocationType, Mode
 from travelplanner.graph.schema import NodeType
 from travelplanner.graph.scheduled import Stop, Timetable, make_trip
@@ -181,6 +183,21 @@ if __name__ == "__main__":
         it = plan_trip(origin, dest, depart, tt, access=access)[0]
         chain = " -> ".join(leg.mode.value for leg in it.legs)
         print(f"  access={access:8} {chain}, arrive {it.arrive_at:%H:%M}")
+
+    # A transport preference (default: public transit) plus the labelled, by-purpose
+    # choices the demo shows -- one best option per objective, deduped. The sample
+    # feed offers a fast pricey flight and a cheap slower train, both walk-reachable.
+    s_origin, s_dest, s_depart = sample_trip()
+    objectives = [(Objective.FASTEST, "Fastest"), (Objective.CHEAPEST, "Cheapest"),
+                  (Objective.GREENEST, "Greenest"),
+                  (Objective.FEWEST_TRANSFERS, "Fewest changes")]
+    print("\nplan_trip_choices labelled by purpose (preference: public transit):")
+    for itinerary, labels in plan_trip_choices(s_origin, s_dest, s_depart,
+                                               sample_timetable(),
+                                               objectives=objectives,
+                                               **preference_kwargs("transit")):
+        chain = " -> ".join(leg.mode.value for leg in itinerary.legs)
+        print(f"  [{', '.join(labels)}] {itinerary.total_duration_human}: {chain}")
 
     tt, conn, origin, dest = rush_hour_driving()
     print("\nTime-of-day driving (road=True over a classified road):")

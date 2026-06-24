@@ -17,10 +17,11 @@ def test_plan_response_shape():
     o, d, dep = sample_trip()
     resp = plan_response(o, d, dep, sample_timetable(), top_n=2)
     assert resp["origin"]["name"] and resp["dest"]["name"]
-    assert resp["objective"] == "air_priority"
+    assert resp["prefer"] == "transit"             # the default transport preference
     assert resp["warnings"] == []
     assert resp["options"], "sample trip should yield at least one itinerary"
     opt = resp["options"][0]
+    assert opt["labels"] and all(isinstance(s, str) for s in opt["labels"])  # purpose labels
     assert opt["segments"]
     seg = opt["segments"][0]
     assert {"coords", "color", "mode", "label"} <= set(seg)
@@ -37,7 +38,7 @@ def test_plan_response_warns_on_empty_and_transit_fallback():
     assert empty["warnings"] and "No route" in empty["warnings"][0]
     # transit access that degrades to a car-only result is flagged
     o, d, _ = sample_trip()
-    res = plan_response(o, d, depart, tt, access="transit")
+    res = plan_response(o, d, depart, tt, prefer="transit")
     if res["options"] and not any(
             leg["mode"] in ("train", "ferry", "flight")
             for opt in res["options"] for leg in opt["legs"]):
@@ -49,7 +50,7 @@ def test_transit_fallback_warning_matches_actual_mode():
     # is a short WALK (within the 2 km transit walk threshold), far from any stop.
     tt = sample_timetable()
     depart = datetime(2026, 7, 1, 8, 0)
-    res = plan_response("10.0,10.0", "10.005,10.0", depart, tt, access="transit")
+    res = plan_response("10.0,10.0", "10.005,10.0", depart, tt, prefer="transit")
     assert res["options"]
     assert all(leg["mode"] == "walk"
                for opt in res["options"] for leg in opt["legs"])
@@ -58,21 +59,67 @@ def test_transit_fallback_warning_matches_actual_mode():
 
 
 def test_transit_fallback_warning_mixed_modes():
-    # access='both' can return BOTH a car and a walk direct option; the warning
-    # must not claim "driving only" when a walk is also shown.
+    # the 'fastest' preference pools car+transit access, so it can return BOTH a car
+    # and a walk direct option; the warning must not claim "driving only" then.
     tt = sample_timetable()
     depart = datetime(2026, 7, 1, 8, 0)
-    res = plan_response("20.0,20.0", "20.016,20.0", depart, tt, access="both", top_n=3)
+    res = plan_response("20.0,20.0", "20.016,20.0", depart, tt, prefer="fastest", top_n=3)
     modes = {leg["mode"] for opt in res["options"] for leg in opt["legs"]}
     assert {"car", "walk"} <= modes
     assert any("direct travel only" in w for w in res["warnings"])
     assert not any("driving only" in w for w in res["warnings"])
 
 
-def test_plan_response_rejects_unknown_objective():
+def test_plan_response_transit_falls_back_to_car_access_for_far_hub():
+    # Walk-only transit can't reach a distant airport and the ocean has no ground
+    # route, so the default 'transit' preference would dead-end. plan_response retries
+    # with car access so a long-haul flight still routes, and notes it drove to the hub.
+    from travelplanner.graph.scheduled import Stop, Timetable, make_trip
+    from travelplanner.graph.schema import NodeType
+    from travelplanner.models import CostLevel, Mode
+    tt = Timetable()
+    tt.add_stop(Stop("JFK", "New York JFK", 40.64, -73.78, NodeType.AIRPORT))
+    tt.add_stop(Stop("HND", "Tokyo Haneda", 35.55, 139.78, NodeType.AIRPORT))
+    tt.add_trip(make_trip("F", Mode.FLIGHT, [
+        ("JFK", "09:00", "09:00"), ("HND", "22:00", "22:00")],
+        cost_level=CostLevel.HIGH))
+    depart = datetime(2026, 7, 1, 6, 0)
+    # origin ~21 km from JFK (not walkable); transoceanic, so no direct ground either
+    res = plan_response("40.71,-74.01", "35.58,139.80", depart, tt, prefer="transit")
+    assert res["options"], "a far-hub flight must still route under the transit default"
+    assert any(leg["mode"] == "flight"
+               for opt in res["options"] for leg in opt["legs"])
+    assert any("car" in w for w in res["warnings"])    # explains the drive to the hub
+
+
+def test_plan_response_transit_preference_leads_with_rail():
+    # When a same-day train exists, the transit-first preferences lead with the rail
+    # option rather than a faster flight (transit) or drive (train) -- but keep the
+    # others behind it. The sample feed has a fast flight and a slower 1-change train.
     o, d, dep = sample_trip()
-    with pytest.raises(ValueError):
-        plan_response(o, d, dep, sample_timetable(), objective="nonsense")
+    tt = sample_timetable()
+
+    res = plan_response(o, d, dep, tt, prefer="transit")
+    assert res["options"]
+    assert any(leg["mode"] == "train" for leg in res["options"][0]["legs"])  # train leads
+    # the faster flight is still offered, just behind the train
+    assert any(leg["mode"] == "flight"
+               for opt in res["options"] for leg in opt["legs"])
+
+    res2 = plan_response(o, d, dep, tt, prefer="train")
+    assert res2["options"]
+    assert any(leg["mode"] == "train" for leg in res2["options"][0]["legs"])  # train leads
+    assert not any(leg["mode"] == "flight"                                    # flight gone
+                   for opt in res2["options"] for leg in opt["legs"])
+
+
+def test_plan_response_unknown_prefer_falls_back():
+    # An unknown preference is lenient: it falls back to the default (transit) and
+    # plans normally rather than raising, so bad input never 500s the demo.
+    o, d, dep = sample_trip()
+    resp = plan_response(o, d, dep, sample_timetable(), prefer="nonsense")
+    assert resp["options"]
+    assert resp["prefer"] == "nonsense"      # echoes the request; planning used the default
 
 
 def test_plan_response_autocomposes_and_surfaces_notes(monkeypatch):
@@ -81,12 +128,12 @@ def test_plan_response_autocomposes_and_surfaces_notes(monkeypatch):
     import warnings
     import travelplanner.service as service
 
-    def fake_plan_trip(o, d, depart, timetable, **kw):
+    def fake_choices(o, d, depart, timetable, **kw):
         assert timetable is None                       # asked to auto-compose
         warnings.warn("feed 999 (X) unavailable: HTTP Error 404: Not Found")
         return []
 
-    monkeypatch.setattr(service, "plan_trip", fake_plan_trip)
+    monkeypatch.setattr(service, "plan_trip_choices", fake_choices)
     res = plan_response("52.0,4.0", "52.1,4.1", datetime(2026, 6, 24, 9, 0), None)
     assert any("unavailable" in w for w in res["warnings"])
 
@@ -105,9 +152,9 @@ def test_plan_response_notes_missing_rail_when_autocomposed(monkeypatch):
         assert timetable is None                       # auto-sourced transit
         leg = Leg(Mode.FLIGHT, rome, flor, 230.0, timedelta(hours=1),
                   timedelta(0), CostLevel.MEDIUM)
-        return [Itinerary([leg], depart, 0.0)]
+        return [(Itinerary([leg], depart, 0.0), ["Fastest"])]   # labelled choice
 
-    monkeypatch.setattr(service, "plan_trip", flight_only)
+    monkeypatch.setattr(service, "plan_trip_choices", flight_only)
     res = plan_response((41.9028, 12.4964), (43.7696, 11.2558),
                         datetime(2026, 6, 26, 8, 0), None)
     assert any("rail" in w.lower() for w in res["warnings"])

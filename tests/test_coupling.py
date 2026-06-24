@@ -5,7 +5,7 @@ from datetime import date, datetime, timedelta
 from travelplanner import place
 from travelplanner.fares import (
     FARE_RATES, heuristic_fare_model, reset_fare_model, set_fare_model)
-from travelplanner.models import CostLevel, LocationType, Mode
+from travelplanner.models import CostLevel, Itinerary, Leg, LocationType, Mode
 from travelplanner.graph.schema import NodeType
 from travelplanner.graph.scheduled import Stop, Timetable, make_trip
 from travelplanner.graph.coupling import GeometricConnector, plan
@@ -22,6 +22,16 @@ def _stop(sid, lat, lon, ntype=NodeType.RAIL_STATION):
 
 def _has_mode(itineraries, mode):
     return any(leg.mode is mode for it in itineraries for leg in it.legs)
+
+
+def _single_leg_itin(mode, hours):
+    """A one-leg itinerary of the given mode and duration, for exclusion unit tests."""
+    o = place("o", LocationType.CITY, 47.0, 7.0)
+    d = place("d", LocationType.CITY, 46.0, 9.0)
+    leg = Leg(mode=mode, from_loc=o, to_loc=d, distance_km=200.0,
+              travel_time=timedelta(hours=hours), overhead=timedelta(),
+              cost_level=CostLevel.MEDIUM)
+    return Itinerary(legs=[leg], depart_at=DEP, score=0.0)
 
 
 def test_door_to_door_train_beats_driving():
@@ -232,6 +242,68 @@ def test_flight_door_to_door():
     results = plan(origin, dest, DEP, tt, conn)
     assert results[0].primary_mode is Mode.FLIGHT
     assert results[0].cost_level is CostLevel.HIGH
+
+
+def test_exclude_flight_suppressed_when_train_alternative_exists():
+    # A traveller who will not fly: the flight is the fastest option, but excluding
+    # it surfaces the train instead of a flight on a rail-doable corridor.
+    tt = Timetable()
+    tt.add_stop(_stop("AxAir", 47.0, 7.0, NodeType.AIRPORT))
+    tt.add_stop(_stop("AyAir", 46.0, 9.0, NodeType.AIRPORT))
+    tt.add_stop(_stop("StX", 47.0, 7.0))
+    tt.add_stop(_stop("StY", 46.0, 9.0))
+    tt.add_trip(make_trip("F", Mode.FLIGHT, [
+        ("AxAir", "09:00", "09:00"), ("AyAir", "09:45", "09:45")],
+        cost_level=CostLevel.HIGH))
+    tt.add_trip(make_trip("IC", Mode.TRAIN, [
+        ("StX", "09:00", "09:00"), ("StY", "10:00", "10:00")]))
+    conn = GeometricConnector(tt.stops)
+    origin = place("o", LocationType.HOTEL, 47.005, 7.005)
+    dest = place("d", LocationType.HOTEL, 46.005, 9.005)
+
+    base = plan(origin, dest, DEP, tt, conn, top_n=5)
+    assert base[0].primary_mode is Mode.FLIGHT          # flight is fastest by default
+
+    kept = plan(origin, dest, DEP, tt, conn, top_n=5,
+                exclude_modes=frozenset({Mode.FLIGHT}))
+    assert kept                                          # an option remains
+    assert not _has_mode(kept, Mode.FLIGHT)              # ...with no flight
+    assert _has_mode(kept, Mode.TRAIN)                   # the train survives
+
+
+def test_exclude_flight_kept_when_flight_is_only_option():
+    # New York -> Tokyo: excluding flights would leave nothing (no ground across the
+    # Pacific), so the flight is kept rather than returning an empty result.
+    tt = Timetable()
+    tt.add_stop(_stop("JFK", 40.64, -73.78, NodeType.AIRPORT))
+    tt.add_stop(_stop("HND", 35.55, 139.78, NodeType.AIRPORT))
+    tt.add_trip(make_trip("F", Mode.FLIGHT, [
+        ("JFK", "09:00", "09:00"), ("HND", "22:00", "22:00")],
+        cost_level=CostLevel.HIGH))
+    conn = GeometricConnector(tt.stops)
+    origin = place("o", LocationType.HOTEL, 40.645, -73.785)
+    dest = place("d", LocationType.HOTEL, 35.555, 139.785)
+
+    kept = plan(origin, dest, DEP, tt, conn,
+                exclude_modes=frozenset({Mode.FLIGHT}))
+    assert kept
+    assert kept[0].primary_mode is Mode.FLIGHT
+
+
+def test_apply_exclusions_keeps_excluded_mode_when_alternative_too_slow():
+    from travelplanner.graph.coupling.planner import _apply_exclusions
+    flight = _single_leg_itin(Mode.FLIGHT, 10)
+    slow_train = _single_leg_itin(Mode.TRAIN, 20)        # > 16 h: not a same-day rail trip
+    kept = _apply_exclusions([flight, slow_train], frozenset({Mode.FLIGHT}))
+    assert flight in kept                                 # flight survives -- rail not same-day
+
+    fast_train = _single_leg_itin(Mode.TRAIN, 12)         # <= 16 h: a real same-day option
+    kept2 = _apply_exclusions([flight, fast_train], frozenset({Mode.FLIGHT}))
+    assert flight not in kept2                             # now the flight is suppressed
+    assert fast_train in kept2
+
+    both = [flight, fast_train]
+    assert _apply_exclusions(both, frozenset()) is both    # empty exclusion: pass-through
 
 
 def test_cch_connector_door_to_door():

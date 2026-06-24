@@ -170,6 +170,40 @@ The origin/destination can be any `LocationType` (`CITY`, `LANDMARK`, `STATION`,
 `AIRPORT`, `HOTEL`); routing is by coordinates and the type is a label — starting
 at a station or airport just gives a near-zero access hop.
 
+## A preferred way of travelling
+
+Most people have a default mode. Rather than tune `access` and mode exclusions by
+hand, pick a named **transport preference** and the engine maps it to a coherent set
+of arguments. The default is `transit` (walk to stops, no car to the station);
+`train` also suppresses flights on rail-doable corridors — they return only when
+there is no same-day train; `drive` is car-first; `fastest` pools every mode with no
+bias.
+
+```python
+from travelplanner.trips import plan_trip, preference_kwargs
+
+it = plan_trip(origin, dest, depart, tt, **preference_kwargs("train"))[0]
+# -> walk -> train -> ...   no flight, even when flying would be quicker
+```
+
+For the door-to-door demo we usually want to *show* a few options at once, each
+labelled by what it is best at. `plan_trip_choices` returns one best itinerary per
+objective (Fastest / Cheapest / Greenest / Fewest changes), deduped so a trip that
+wins several objectives keeps all its labels:
+
+```python
+from travelplanner import Objective
+from travelplanner.trips import plan_trip_choices
+
+choices = plan_trip_choices(origin, dest, depart, tt, access="both", objectives=[
+    (Objective.FASTEST, "Fastest"), (Objective.GREENEST, "Greenest")])
+for itinerary, labels in choices:
+    print(labels, itinerary.total_duration_human)
+```
+
+The candidate pool is generated once and ranked per objective, so the labelled view
+costs about one ordinary plan no matter how many labels you ask for.
+
 ## Driving times respond to the departure
 
 With `road=True` the car legs are routed over the real street network and timed by

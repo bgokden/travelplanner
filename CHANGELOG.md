@@ -7,6 +7,22 @@ All notable changes to this project are documented here. The format is based on
 ## [Unreleased]
 
 ### Added
+- A preferred way of transportation, replacing the car-first/fly-first default that
+  read as US-centric. A named preference -- `transit` (the new default: walk to
+  stops, no car to the station), `train` (also suppresses flights on rail-doable
+  corridors, with the flight returning only when there is no same-day train), `drive`,
+  or `fastest` -- maps to a coherent set of planner arguments (`TRANSPORT_PREFERENCES`
+  / `preference_kwargs`). The planner gains `exclude_modes` (drop candidates using a
+  mode unless that leaves nothing, or only options slower than a same-day rail trip),
+  which is how "trains, not planes" suppresses flights rather than merely ranking them
+  down. The demo offers the preference as a sticky setting (it remembers your choice)
+  and now shows several itineraries at once, each labelled by purpose
+  (Fastest / Cheapest / Greenest / Fewest changes) and re-sortable -- the transit-first
+  preferences lead with the rail option when a same-day train exists (the faster
+  flight or drive stays, just behind it). Built on the new
+  `plan_trip_choices` / `plan_labeled` -- one best option per objective, deduped so a
+  trip that wins several keeps all its labels, generated from one candidate pool so the
+  labelled view costs about one ordinary plan.
 - Ground transit in door-to-door planning, end to end. The GTFS loader honours
   station/platform hierarchy (`parent_station`): a trip departs a platform, but a
   coordinate snaps to the station, so the loader links the two with a short footpath

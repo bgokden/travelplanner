@@ -17,13 +17,13 @@ extract). The caller may pass an explicit `connector=` for full control.
 from datetime import datetime
 
 from travelplanner.geo import haversine
-from travelplanner.models import Itinerary, Location
+from travelplanner.models import Itinerary, Location, Mode
 from travelplanner.graph.coupling import (
     GeometricConnector,
     RoadConnector,
     SplitConnector,
 )
-from travelplanner.graph.coupling.planner import plan_multi
+from travelplanner.graph.coupling.planner import plan_labeled, plan_multi
 from travelplanner.graph.query import Objective
 from travelplanner.graph.scheduled.model import Timetable
 from travelplanner.roads import (
@@ -39,6 +39,34 @@ _ACCESS_MARGIN_KM = 5.0
 # cover longer hops (e.g. the local train to the airport). Beyond it, a stop is
 # not an access point -- you reach it as a line-haul leg, not on foot.
 WALK_ACCESS_KM = 2.0
+
+# Named "preferred way of transportation" profiles. Each is a coherent preset of
+# plan_trip arguments -- the first/last-mile `access` mode plus any `exclude_modes`
+# the traveller avoids -- so a caller (or UI) picks an intent once instead of tuning
+# the knobs by hand. They constrain WHICH modes appear; the `objective` (fastest,
+# greenest, ...) is orthogonal and ranks whatever survives.
+#   transit: walk + public transit door-to-door (no car to the station); flights
+#            still allowed for long hops with no rail. The sensible default.
+#   train:   like transit but suppresses flights on rail-doable corridors (shown
+#            again only when flying is the only same-day option) -- "trains, not planes".
+#   drive:   car-first first/last mile, every mode visible -- for a car-centric region.
+#   fastest: pool car and transit access and rank purely by the objective -- no bias.
+TRANSPORT_PREFERENCES = {
+    "transit": {"access": "transit", "exclude_modes": frozenset()},
+    "train": {"access": "transit", "exclude_modes": frozenset({Mode.FLIGHT})},
+    "drive": {"access": "car", "exclude_modes": frozenset()},
+    "fastest": {"access": "both", "exclude_modes": frozenset()},
+}
+DEFAULT_TRANSPORT_PREFERENCE = "transit"
+
+
+def preference_kwargs(name: str) -> dict:
+    """The plan_trip kwargs (`access`, `exclude_modes`) for a named transport
+    preference. An unknown or empty name falls back to the default (transit-first),
+    so a caller can pass user input straight through."""
+    preset = TRANSPORT_PREFERENCES.get(name) or \
+        TRANSPORT_PREFERENCES[DEFAULT_TRANSPORT_PREFERENCE]
+    return dict(preset)
 
 
 def _nearby_stops(timetable: Timetable, points, max_km: float) -> dict:
@@ -180,6 +208,40 @@ def _select_connectors(origin: Location, dest: Location, timetable: Timetable, *
     return [_mode_connector("car", timetable)]
 
 
+def _prepare_trip(origin, dest, depart_at, timetable, *, geocoder, road,
+                  turn_aware, access, egress, region, data_dir, connector):
+    """Shared prep for plan_trip / plan_trip_choices: validate the mode flags before
+    the (possibly network) geocoding, default the departure to now, geocode the
+    endpoints, auto-compose a timetable when none is given (surfacing its coverage
+    notes as warnings), and select the connector(s). Returns
+    (origin, dest, depart_at, timetable, connectors)."""
+    # Skip mode validation when an explicit connector= is supplied: it fully defines
+    # access/egress, so road/access/egress are ignored.
+    if connector is None:
+        _validate_modes(access, egress, road, turn_aware)
+    if depart_at is None:
+        depart_at = datetime.now().replace(microsecond=0)
+    o = _coerce(origin, geocoder=geocoder)
+    d = _coerce(dest, geocoder=geocoder)
+    if timetable is None:
+        import warnings
+        from travelplanner.auto_timetable import build_default_timetable
+        # Heads-up before the (possibly slow) compose, so a cold first call does not
+        # look like a hang. warnings dedupes per message, so repeated calls in one
+        # process only see this once.
+        warnings.warn(
+            "plan_trip: auto-composing a timetable for this trip; the first run "
+            "downloads flight and transit data (cached afterwards), which can take "
+            "a few seconds", stacklevel=3)
+        timetable, notes = build_default_timetable(o, d)
+        for note in notes:
+            warnings.warn(f"plan_trip: {note}", stacklevel=3)
+    connectors = _select_connectors(o, d, timetable, access=access, egress=egress,
+                                    road=road, turn_aware=turn_aware, region=region,
+                                    data_dir=data_dir, connector=connector)
+    return o, d, depart_at, timetable, connectors
+
+
 def plan_trip(origin, dest, depart_at: datetime | None = None,
               timetable: Timetable | None = None,
               *, objective: Objective = Objective.FASTEST, top_n: int = 3,
@@ -187,7 +249,8 @@ def plan_trip(origin, dest, depart_at: datetime | None = None,
               road: bool = False, turn_aware: bool = False,
               access: str = "car", egress: str | None = None,
               region: str | None = None, data_dir: str | None = None,
-              connector: RoadConnector | None = None) -> list[Itinerary]:
+              connector: RoadConnector | None = None,
+              exclude_modes: frozenset = frozenset()) -> list[Itinerary]:
     """Rank door-to-door multimodal itineraries between two locations.
 
     The minimal call is `plan_trip(origin, dest)`: `depart_at` defaults to now and
@@ -236,35 +299,50 @@ def plan_trip(origin, dest, depart_at: datetime | None = None,
     direct ground (drive/walk) candidate -- so a transit request can still yield a
     car-only itinerary when the door is far from any stop (rather than nothing).
 
+    `exclude_modes` suppresses itineraries using any of the given Modes (e.g.
+    `{Mode.FLIGHT}` for a traveller who will not fly) unless that would leave no
+    option or only options slower than a same-day rail trip -- see `plan()`. Use it
+    with `access="transit"` to express a "trains, not planes" preference.
+
     Returns up to `top_n` Itinerary objects, best first for `objective`. An EMPTY
     list means no route exists (not an error); an invalid coordinate raises.
     """
-    # Validate cheap mode flags before the (possibly network) geocoding, and skip
-    # them entirely when an explicit connector= is supplied (it fully defines
-    # access/egress, so road/access/egress are ignored -- see above).
-    if connector is None:
-        _validate_modes(access, egress, road, turn_aware)
-    if depart_at is None:
-        depart_at = datetime.now().replace(microsecond=0)
-    o = _coerce(origin, geocoder=geocoder)
-    d = _coerce(dest, geocoder=geocoder)
-
-    if timetable is None:
-        import warnings
-        from travelplanner.auto_timetable import build_default_timetable
-        # Heads-up before the (possibly slow) compose, so a cold first call does
-        # not look like a hang. warnings dedupes per location, so repeated calls
-        # in one process only see this once.
-        warnings.warn(
-            "plan_trip: auto-composing a timetable for this trip; the first run "
-            "downloads flight and transit data (cached afterwards), which can take "
-            "a few seconds", stacklevel=2)
-        timetable, notes = build_default_timetable(o, d)
-        for note in notes:
-            warnings.warn(f"plan_trip: {note}", stacklevel=2)
-
-    connectors = _select_connectors(o, d, timetable, access=access, egress=egress,
-                                    road=road, turn_aware=turn_aware, region=region,
-                                    data_dir=data_dir, connector=connector)
+    o, d, depart_at, timetable, connectors = _prepare_trip(
+        origin, dest, depart_at, timetable, geocoder=geocoder, road=road,
+        turn_aware=turn_aware, access=access, egress=egress, region=region,
+        data_dir=data_dir, connector=connector)
     return plan_multi(o, d, depart_at, timetable, connectors,
-                      conditions=conditions, objective=objective, top_n=top_n)
+                      conditions=conditions, objective=objective, top_n=top_n,
+                      exclude_modes=exclude_modes)
+
+
+def plan_trip_choices(origin, dest, depart_at: datetime | None = None,
+                      timetable: Timetable | None = None, *, objectives,
+                      conditions: frozenset = frozenset(), geocoder=None,
+                      road: bool = False, turn_aware: bool = False,
+                      access: str = "transit", egress: str | None = None,
+                      region: str | None = None, data_dir: str | None = None,
+                      connector: RoadConnector | None = None,
+                      exclude_modes: frozenset = frozenset()) -> list:
+    """Door-to-door itineraries as ONE best choice per objective, deduped and
+    labelled -- the multi-criteria "choices by purpose" view (e.g. one Fastest, one
+    Cheapest, one Greenest card) the demo shows.
+
+    Endpoint, timetable, and connector handling is identical to plan_trip (it
+    auto-composes a timetable when none is given, surfacing coverage notes as
+    warnings). The difference is the result: instead of ranking by ONE objective it
+    returns the leader of each objective in `objectives` -- an ordered sequence of
+    (Objective, label) pairs -- with a trip that wins several objectives appearing
+    once carrying all its labels. Pair it with a transport preference:
+    `access`/`exclude_modes` constrain WHICH modes appear (e.g. transit access with
+    flights excluded), while the objectives label HOW each surviving choice is best.
+
+    Returns a list of (Itinerary, list[str]); empty if no route exists.
+    """
+    o, d, depart_at, timetable, connectors = _prepare_trip(
+        origin, dest, depart_at, timetable, geocoder=geocoder, road=road,
+        turn_aware=turn_aware, access=access, egress=egress, region=region,
+        data_dir=data_dir, connector=connector)
+    return plan_labeled(o, d, depart_at, timetable, connectors,
+                        objectives=objectives, conditions=conditions,
+                        exclude_modes=exclude_modes)

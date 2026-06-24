@@ -7,9 +7,10 @@ Pure stdlib (http.server) -- no extra dependencies. Start it with:
 
 Endpoints:
     GET /                  the map UI (enter origin/dest, see ranked trips)
-    GET /api/plan?origin=&dest=&depart=&objective=&access=&top=&road=&region=
-                           ranked itineraries as JSON, each with per-leg map
-                           segments ({coords, mode, color, label})
+    GET /api/plan?origin=&dest=&depart=&prefer=&top=&road=&transit=&region=
+                           itineraries labelled by purpose (Fastest/Cheapest/
+                           Greenest/Fewest changes) for the chosen transport
+                           preference, each with per-leg map segments and labels
     GET /api/example       a ready-made origin/dest/depart for the bundled feed
     GET /api/health        {"status": "ok"}
 
@@ -38,7 +39,8 @@ from travelplanner.openflights import (load_airports, load_flight_network,
                                        search_airports)
 from travelplanner.roads import _coerce
 from travelplanner.samples import sample_timetable
-from travelplanner.trips import plan_trip
+from travelplanner.trips import (DEFAULT_TRANSPORT_PREFERENCE,
+                                 plan_trip_choices, preference_kwargs)
 from travelplanner.viz import MODE_COLORS, itinerary_segments
 
 DEFAULT_HOST = "127.0.0.1"
@@ -205,38 +207,82 @@ def _parse_depart(value, default: datetime) -> datetime:
 _RAIL_PLAUSIBLE_MIN_KM = 30.0
 _RAIL_PLAUSIBLE_MAX_KM = 1000.0
 
+# The purposes the demo offers as labelled, re-sortable choices: the single best
+# itinerary per objective, deduped (a trip that wins several keeps all its labels).
+# Ordered so the default lead is the fastest option; the user can re-sort by label.
+# air_priority is intentionally absent -- a "purpose" is what a traveller asks for,
+# and FASTEST already surfaces a flight when flying is genuinely fastest.
+_CHOICE_OBJECTIVES = (
+    (Objective.FASTEST, "Fastest"),
+    (Objective.CHEAPEST, "Cheapest"),
+    (Objective.GREENEST, "Greenest"),
+    (Objective.FEWEST_TRANSFERS, "Fewest changes"),
+)
+
 
 def plan_response(origin, dest, depart_at: datetime, timetable=None, *,
-                  objective: str = "air_priority", top_n: int = 3,
-                  access: str = "car", road: bool = False,
+                  prefer: str = DEFAULT_TRANSPORT_PREFERENCE, top_n: int = 4,
+                  road: bool = False,
                   region: str | None = None, data_dir: str | None = None,
                   turn_aware: bool = False, geocoder=None) -> dict:
     """Plan a door-to-door trip and shape it for the map UI (JSON-safe dict).
 
-    Mirrors plan_trip's arguments; each ranked itinerary is returned with its
-    JSON fields plus `segments` -- one coloured polyline per leg. With road=True
-    and a resolvable region, car legs carry their real routed geometry. With
-    timetable=None, plan_trip auto-composes a timetable for the trip (flight
-    network plus covering GTFS feeds); its coverage notes are surfaced as warnings.
+    `prefer` is a named transport preference (see TRANSPORT_PREFERENCES) -- e.g.
+    "transit" (the default: walk + public transit, no car to the station), "train"
+    (suppress flights on rail-doable corridors), "drive", or "fastest". It selects
+    the first/last-mile access and any suppressed modes; the response then offers up
+    to `top_n` itineraries labelled by purpose (Fastest / Cheapest / Greenest /
+    Fewest changes), each carrying its `labels`, so the UI can show and re-sort them.
+
+    Each option is its itinerary's JSON plus `segments` (one coloured polyline per
+    leg) and `labels`. With road=True and a resolvable region, car legs carry their
+    real routed geometry. With timetable=None a timetable is auto-composed for the
+    trip (flight network plus covering GTFS feeds); its coverage notes are surfaced
+    as warnings.
     """
-    obj = Objective(objective)
+    pref = preference_kwargs(prefer)            # {"access", "exclude_modes"}
+    access = pref["access"]
     o = _coerce(origin, geocoder=geocoder)
     d = _coerce(dest, geocoder=geocoder)
-    # Capture plan_trip's auto-compose notes (coverage gaps, feeds that could not
-    # be fetched) so a missing-transit outcome reads as honest, not broken.
+    # Capture the auto-compose notes (coverage gaps, feeds that could not be
+    # fetched) so a missing-transit outcome reads as honest, not broken.
+    drove_to_hub = False
     with warnings_mod.catch_warnings(record=True) as caught:
         warnings_mod.simplefilter("always")
-        itineraries = plan_trip(o, d, depart_at, timetable, objective=obj,
-                                top_n=top_n, access=access, road=road,
-                                turn_aware=turn_aware, region=region,
-                                data_dir=data_dir, geocoder=geocoder)
+        labeled = plan_trip_choices(
+            o, d, depart_at, timetable, objectives=_CHOICE_OBJECTIVES,
+            road=road, turn_aware=turn_aware, region=region, data_dir=data_dir,
+            geocoder=geocoder, **pref)
+        # Walk-only transit access can reach no hub when the nearest airport/station
+        # is far and no feeder service is loaded (e.g. a long-haul flight from a city
+        # with no airport rail) -- which would dead-end the default preference. Retry
+        # pooling car access so the trip still routes; the mode preference is kept
+        # (the planner restores an excluded mode only when it is the sole way there).
+        if not labeled and access == "transit":
+            labeled = plan_trip_choices(
+                o, d, depart_at, timetable, objectives=_CHOICE_OBJECTIVES,
+                road=road, turn_aware=turn_aware, region=region, data_dir=data_dir,
+                geocoder=geocoder, access="both",
+                exclude_modes=pref["exclude_modes"])
+            drove_to_hub = bool(labeled)
+    # Transit-first preferences (access == "transit": the transit and train presets)
+    # lead with a rail/ferry option when one exists, so the headline card is the train
+    # rather than a flight or drive that merely happens to be fastest. Stable, so the
+    # remaining choices keep their by-objective order behind it; no effect when no
+    # ground line-haul is present (e.g. a long-haul that can only fly).
+    if access == "transit":
+        labeled.sort(key=lambda il: 0 if any(
+            leg.mode in (Mode.TRAIN, Mode.FERRY) for leg in il[0].legs) else 1)
+    labeled = labeled[:top_n]
     warnings: list = [str(w.message) for w in caught]
+    itineraries = [it for it, _ in labeled]
     options = []
-    for it in itineraries:
+    for it, labels in labeled:
         opt = it.to_dict(with_legs=True)
         # Each leg already carries its routed polyline when a road-backed connector
         # produced one (road=True); the map follows it, else draws a straight line.
         opt["segments"] = itinerary_segments(it)
+        opt["labels"] = list(labels)
         options.append(opt)
     # Explain the two confusing outcomes a user actually hits, so an empty or
     # car-only result reads as honest rather than broken.
@@ -274,11 +320,15 @@ def plan_response(origin, dest, depart_at: datetime, timetable=None, *,
         warnings.append(
             "No train in these results -- there may be rail on this route we have no "
             "data for (GTFS coverage is uneven). Showing flights/driving only.")
+    if drove_to_hub:
+        warnings.append(
+            "No walk-up transit to a hub from here, so these reach the "
+            "airport/station by car.")
     return {
         "origin": o.to_dict(),
         "dest": d.to_dict(),
         "depart_at": depart_at.isoformat(),
-        "objective": obj.value,
+        "prefer": prefer,
         "options": options,
         "warnings": sorted(set(warnings)),
     }
@@ -327,6 +377,13 @@ _UI_HTML = """<!doctype html><html><head><meta charset="utf-8">
  .opt .t{font-weight:700}.opt .m{color:#718096;font-size:12px;margin-top:2px}
  .chip{display:inline-block;padding:1px 7px;border-radius:10px;color:#fff;
    font-size:11px;margin:3px 3px 0 0}
+ .lab-chip{display:inline-block;padding:1px 7px;border-radius:10px;background:#2b6cb0;
+   color:#fff;font-size:11px;font-weight:700;margin-right:5px}
+ .sortbar{margin:10px 0 2px;font-size:12px;color:#718096}
+ .sortbar .lab{display:inline-block;width:auto;margin:2px 3px 0 0;padding:3px 9px;
+   background:#edf2f7;color:#2b6cb0;border:1px solid #cbd5e0;border-radius:11px;
+   font:inherit;font-size:11px;font-weight:600;cursor:pointer}
+ .sortbar .lab:hover{background:#e2e8f0}
  .leg{font-size:12px;color:#4a5568;margin-top:3px}
  .sw{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;
    vertical-align:middle}
@@ -349,24 +406,15 @@ _UI_HTML = """<!doctype html><html><head><meta charset="utf-8">
   </div>
   <label>Depart</label>
   <input id="depart" type="datetime-local" value="DEFAULT_DEPART">
-  <div class="row">
-   <div><label>Objective</label>
-    <select id="objective" title="how to rank options">
-     <option value="air_priority" title="prefer flights">air priority</option>
-     <option value="fastest" title="shortest total time">fastest</option>
-     <option value="cheapest" title="lowest cost tier">cheapest</option>
-     <option value="fewest_transfers" title="fewest vehicle changes">fewest transfers</option>
-     <option value="greenest" title="least driving, then lowest emissions">greenest</option>
-    </select></div>
-   <div><label>Access</label>
-    <select id="access">
-     <option value="car">car</option>
-     <option value="transit">transit</option>
-     <option value="both">both</option>
-    </select></div>
-  </div>
-  <label>Options</label>
-  <input id="top" type="number" min="1" max="9" value="3">
+  <label>Preferred transport</label>
+  <select id="prefer" title="how you like to travel; the choices below are planned for it">
+   <option value="transit" title="walk to stops, no car to the station; trains/buses/ferries, and a flight only when it is far">Public transit</option>
+   <option value="train" title="rail and ferry; flights are hidden unless there is no same-day train">Trains, avoid flying</option>
+   <option value="drive" title="drive the whole way, or drive to the airport/station">Driving</option>
+   <option value="fastest" title="no preference: the quickest door to door, including flights">Fastest, any mode</option>
+  </select>
+  <label>Choices to show</label>
+  <input id="top" type="number" min="1" max="9" value="4">
   <label class="chk"><input type="checkbox" id="road"> real streets (car legs, auto-downloads map data)</label>
   <label class="chk"><input type="checkbox" id="transit"> trains &amp; buses (auto-downloads schedule data; first run slower)</label>
   <button id="go">Plan trip</button>
@@ -503,6 +551,17 @@ function renderResults(data){
       true);
     return; }
   box.innerHTML = '<div class="ep">'+endpointsLine(data)+'</div>';
+  const present = sortLabels(data);
+  if(present.length > 1){
+    const bar = document.createElement('div'); bar.className = 'sortbar';
+    bar.append('Sort: ');
+    present.forEach(l => {
+      const b = document.createElement('button'); b.className = 'lab';
+      b.textContent = l; b.onclick = () => sortByLabel(data, l);
+      bar.appendChild(b);
+    });
+    box.appendChild(bar);
+  }
   data.options.forEach((opt, i) => {
     const div = document.createElement('div'); div.className = 'opt';
     const arr = new Date(opt.arrive_at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
@@ -518,22 +577,35 @@ function renderResults(data){
     }).join('');
     const fare = opt.fare_estimate != null
       ? ' &middot; ~'+Math.round(opt.fare_estimate)+' '+esc(opt.fare_currency) : '';
-    div.innerHTML = '<div class="t">Option '+(i+1)+' &middot; '
+    const labelChips = (opt.labels||[]).map(l =>
+      '<span class="lab-chip">'+esc(l)+'</span>').join('');
+    div.innerHTML = '<div class="t">'+(labelChips || ('Option '+(i+1)+' '))
       + fmtDur(opt.total_minutes)+'</div>'
       + '<div class="m">'+opt.num_transfers+' transfer(s) &middot; cost '+esc(opt.cost_level)
       + fare + ' &middot; arrive '+arr+'</div><div>'+modes+'</div>'+legs;
     div.onclick = () => drawOption(data, i);
     box.appendChild(div);
   });
-  setStatus(data.options.length+' option(s). Click one to highlight it.' + warn);
+  setStatus(data.options.length+' choice(s). Click a card to highlight it'
+    + (sortLabels(data).length>1 ? '; use Sort to reorder.' : '.') + warn);
   drawOption(data, 0);
+}
+
+function sortLabels(data){
+  return [...new Set(data.options.flatMap(o => o.labels||[]))];
+}
+
+function sortByLabel(data, label){
+  const i = data.options.findIndex(o => (o.labels||[]).includes(label));
+  if(i > 0){ const [picked] = data.options.splice(i, 1); data.options.unshift(picked); }
+  renderResults(data);
 }
 
 async function plan(){
   const origin = coordFor('origin'), dest = coordFor('dest');
   if(!origin || !dest){ setStatus('Enter an origin and a destination.', true); return; }
-  const p = new URLSearchParams({origin, dest, objective:$('objective').value,
-    access:$('access').value, top:$('top').value, depart:$('depart').value});
+  const p = new URLSearchParams({origin, dest, prefer:$('prefer').value,
+    top:$('top').value, depart:$('depart').value});
   if($('road').checked) p.set('road','1');   // region auto-resolved from the coordinates
   if($('transit').checked) p.set('transit','1');
   const btn = $('go'), label = btn.textContent;
@@ -561,6 +633,15 @@ async function loadExample(){
 
 $('go').onclick = plan;
 $('ex').onclick = loadExample;
+
+// Remember the transport preference across visits (set once, it sticks). Guarded:
+// localStorage can throw in private modes, which must not break the page.
+const PREF_KEY = 'tp_prefer';
+try {
+  const saved = localStorage.getItem(PREF_KEY);
+  if(saved && [...$('prefer').options].some(o => o.value === saved)) $('prefer').value = saved;
+  $('prefer').onchange = () => { try { localStorage.setItem(PREF_KEY, $('prefer').value); } catch(e){} };
+} catch(e){}
 </script></body></html>"""
 
 
@@ -632,8 +713,8 @@ class _Handler(BaseHTTPRequestHandler):
             timetable = None if transit else srv.timetable
             response = plan_response(
                 origin, dest, depart_at, timetable,
-                objective=first("objective", "air_priority"),
-                access=first("access", "car"), top_n=top_n, road=road,
+                prefer=first("prefer", DEFAULT_TRANSPORT_PREFERENCE),
+                top_n=top_n, road=road,
                 region=(first("region") or srv.region), data_dir=srv.data_dir,
                 turn_aware=srv.turn_aware, geocoder=srv.geocoder)
         except (ValueError, KeyError) as exc:

@@ -208,14 +208,17 @@ python -m travelplanner.service --offline             # bundled tables only, no 
 
 Start typing an origin and destination to get **autocomplete** suggestions across
 bundled cities, **airports** (by name or IATA code), **transit stations** from the
-loaded feed, and OpenStreetMap **places** — or paste `lat,lon`. Pick an objective
-and access mode and the ranked itineraries draw on the map; tick *real streets*
+loaded feed, and OpenStreetMap **places** — or paste `lat,lon`. Pick a **preferred
+way of transportation** (public transit by default — it remembers your choice) and
+the trip comes back as a few **choices labelled by purpose** (Fastest / Cheapest /
+Greenest / Fewest changes) you can re-sort, drawn on the map; the transit-first
+preferences lead with the train when there's a same-day one. Tick *real streets*
 with a region to route car legs over the actual road network.
 
 The same thing is a JSON API you can call headless:
 
-- `GET /api/plan?origin=&dest=&depart=&objective=&access=&top=&road=&region=` —
-  ranked itineraries, each with per-leg map segments
+- `GET /api/plan?origin=&dest=&depart=&prefer=&top=&road=&transit=&region=` —
+  itineraries labelled by purpose, each with per-leg map segments
 - `GET /api/geocode?q=` — location autocomplete suggestions
 - `GET /api/example` · `GET /api/health`
 

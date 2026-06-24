@@ -277,6 +277,83 @@ def test_plan_trip_access_both_shows_car_and_transit():
     assert not any(leg.mode is Mode.FLIGHT for leg in res[0].legs)  # GREENEST leads no-flight
 
 
+def test_transport_preference_presets():
+    from travelplanner.trips import (
+        DEFAULT_TRANSPORT_PREFERENCE, TRANSPORT_PREFERENCES, preference_kwargs)
+    assert DEFAULT_TRANSPORT_PREFERENCE == "transit"
+    # The train preset is transit access with flights suppressed.
+    assert preference_kwargs("train") == {
+        "access": "transit", "exclude_modes": frozenset({Mode.FLIGHT})}
+    # The default preset allows every mode via transit access.
+    assert preference_kwargs("transit")["exclude_modes"] == frozenset()
+    # Unknown / empty names fall back to the default, never raise.
+    assert preference_kwargs("nonsense") == preference_kwargs("transit")
+    assert preference_kwargs("") == preference_kwargs("transit")
+    # The returned dict is a copy -- mutating it must not corrupt the preset.
+    k = preference_kwargs("train")
+    k["access"] = "car"
+    assert TRANSPORT_PREFERENCES["train"]["access"] == "transit"
+
+
+def _train_or_flight_timetable():
+    """Both a through-train and a faster flight reach the destination, so a 'trains,
+    not planes' preference has a real rail option to surface instead of the flight."""
+    from travelplanner.graph.schema import NodeType
+    tt = Timetable()
+    tt.add_stop(Stop("OcS", "Origin Centraal", 52.10, 5.10, NodeType.RAIL_STATION))
+    tt.add_stop(Stop("OcA", "Origin Airport", 52.10, 5.10, NodeType.AIRPORT))
+    tt.add_stop(Stop("DcS", "Dest Centraal", 50.10, 8.10, NodeType.RAIL_STATION))
+    tt.add_stop(Stop("DcA", "Dest Airport", 50.10, 8.10, NodeType.AIRPORT))
+    tt.add_trip(make_trip("ICE", Mode.TRAIN,
+                          [("OcS", "09:00", "09:00"), ("DcS", "12:00", "12:00")]))
+    tt.add_trip(make_trip("FL", Mode.FLIGHT,
+                          [("OcA", "09:00", "09:00"), ("DcA", "09:50", "09:50")]))
+    return tt
+
+
+def test_plan_trip_train_preference_suppresses_flight():
+    """The 'train' preset (access='transit' + exclude flights) surfaces the through
+    train instead of the faster flight on a rail-doable corridor; the plain transit
+    trip leads with the flight, proving the preset is what changes the outcome."""
+    from travelplanner.trips import preference_kwargs
+    tt = _train_or_flight_timetable()
+    origin = place("origin", LocationType.HOTEL, 52.105, 5.105)
+    dest = place("dest", LocationType.HOTEL, 50.105, 8.105)
+    depart = datetime(2026, 6, 17, 7, 30)
+
+    base = plan_trip(origin, dest, depart, tt, access="transit")
+    assert any(leg.mode is Mode.FLIGHT for leg in base[0].legs)   # flight leads by default
+
+    res = plan_trip(origin, dest, depart, tt, **preference_kwargs("train"))
+    assert res
+    assert not any(leg.mode is Mode.FLIGHT for it in res for leg in it.legs)
+    assert any(leg.mode is Mode.TRAIN for it in res for leg in it.legs)
+
+
+def test_plan_trip_choices_labels_by_objective():
+    """plan_trip_choices returns one labelled leader per objective, deduped: every
+    requested label lands on exactly one choice, and Greenest is never a flight."""
+    from travelplanner.trips import plan_trip_choices
+    tt = _train_or_flight_timetable()
+    origin = place("origin", LocationType.HOTEL, 52.105, 5.105)
+    dest = place("dest", LocationType.HOTEL, 50.105, 8.105)
+    depart = datetime(2026, 6, 17, 7, 30)
+    objectives = [(Objective.FASTEST, "Fastest"),
+                  (Objective.CHEAPEST, "Cheapest"),
+                  (Objective.GREENEST, "Greenest"),
+                  (Objective.FEWEST_TRANSFERS, "Fewest changes")]
+
+    choices = plan_trip_choices(origin, dest, depart, tt, objectives=objectives,
+                                access="both")
+    assert choices
+    for itin, labels in choices:
+        assert labels and all(isinstance(s, str) for s in labels)
+    all_labels = [s for _, labels in choices for s in labels]
+    assert sorted(all_labels) == sorted(lbl for _, lbl in objectives)  # none lost/dup
+    green = next(it for it, labels in choices if "Greenest" in labels)
+    assert not any(leg.mode is Mode.FLIGHT for leg in green.legs)
+
+
 def test_plan_trip_asymmetric_transit_access_car_egress():
     """access='transit', egress='car': walk to the station for the line-haul,
     then a car from the arrival stop to a door that is too far to walk."""

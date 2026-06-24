@@ -58,6 +58,14 @@ _MIN_LEG_KMH = 25.0
 _MAX_DETOUR_RATIO = 2.0
 _MAX_JOURNEY_LEGS = 10
 
+# A preferred-mode exclusion (a traveller who will not fly) suppresses candidates
+# using the excluded mode -- but only while a same-day alternative survives. If the
+# best remaining option is slower than this, the excluded mode is the only realistic
+# way there within a day, so the exclusion is bypassed and the flight is shown again.
+# This is what makes "avoid flying" hide flights on a rail-doable corridor yet still
+# surface the flight when the only ground route is an overnight, multi-day slog.
+_EXCLUDE_FALLBACK_HOURS = 16.0
+
 # Line-haul mode restrictions used to diversify candidates.
 _MODE_SETS = (
     None,                                   # all modes (earliest arrival)
@@ -168,6 +176,16 @@ def _objective_axes(itin: Itinerary, objective: Objective) -> tuple:
     return m if objective in _FULL_FRONTIER_OBJECTIVES else m[:3]
 
 
+def _signature(itin: Itinerary) -> tuple:
+    """Ranking identity of an itinerary: all five axes (time, cost, transfers,
+    car_km, emissions) plus its mode sequence. Two itineraries with the same
+    signature are interchangeable for ranking -- used both to dedupe candidates and
+    to recognise that a leader winning several objectives is one choice."""
+    total, cost, transfers, car_km, emissions = _metrics(itin)
+    return (round(total), round(cost, 2), transfers, round(car_km, 3),
+            round(emissions, 1), tuple(leg.mode.value for leg in itin.legs))
+
+
 def _dedupe(cands: list[Itinerary]) -> list[Itinerary]:
     """Drop only TRULY equivalent candidates. The signature covers all five
     ranking axes (time, cost, transfers, car_km, emissions) plus the mode
@@ -177,9 +195,7 @@ def _dedupe(cands: list[Itinerary]) -> list[Itinerary]:
     seen: set = set()
     out: list[Itinerary] = []
     for c in cands:
-        total, cost, transfers, car_km, emissions = _metrics(c)
-        sig = (round(total), round(cost, 2), transfers, round(car_km, 3),
-               round(emissions, 1), tuple(leg.mode.value for leg in c.legs))
+        sig = _signature(c)
         if sig in seen:
             continue
         seen.add(sig)
@@ -392,6 +408,25 @@ def _candidates(origin: Location, dest: Location, depart_at: datetime,
     return candidates
 
 
+def _apply_exclusions(candidates: list[Itinerary],
+                      exclude_modes: frozenset) -> list[Itinerary]:
+    """Drop candidates that use an excluded mode (a traveller's "do not fly"), unless
+    that leaves nothing or only options slower than a same-day rail trip
+    (_EXCLUDE_FALLBACK_HOURS) -- then the excluded mode is the only realistic way
+    there and every candidate is kept. Returns the input unchanged when nothing is
+    excluded, so it is a no-op for the default (empty) exclusion set."""
+    if not exclude_modes:
+        return candidates
+    kept = [c for c in candidates
+            if not any(leg.mode in exclude_modes for leg in c.legs)]
+    if not kept:
+        return candidates
+    best = min(c.total_duration.total_seconds() for c in kept)
+    if best > _EXCLUDE_FALLBACK_HOURS * 3600.0:
+        return candidates
+    return kept
+
+
 def _rank(candidates: list[Itinerary], objective: Objective,
           top_n: int) -> list[Itinerary]:
     """Pareto-filter, score, and order candidates for the objective; keep top_n."""
@@ -407,7 +442,8 @@ def plan(origin: Location, dest: Location, depart_at: datetime,
          conditions: frozenset[str] = frozenset(),
          objective: Objective = Objective.FASTEST,
          top_n: int = 3,
-         horizon: timedelta = timedelta(days=2)) -> list[Itinerary]:
+         horizon: timedelta = timedelta(days=2),
+         exclude_modes: frozenset = frozenset()) -> list[Itinerary]:
     """Rank Pareto-optimal door-to-door itineraries for the given objective.
 
     Returns a list of up to top_n Itinerary objects, best first. An EMPTY list
@@ -415,6 +451,12 @@ def plan(origin: Location, dest: Location, depart_at: datetime,
     with no road alternative) -- it is not an error. Invalid input (e.g. an
     out-of-range coordinate) raises instead, so empty != bad input. A journey that
     would ride through a dangling (unregistered) stop is routed around, not crashed.
+
+    `exclude_modes` suppresses itineraries that use any of the given Modes (e.g.
+    `{Mode.FLIGHT}` for a traveller who will not fly) before ranking -- unless that
+    would leave no option, or only options slower than a same-day rail trip, in
+    which case the excluded mode is the only realistic way there and the candidates
+    are kept. Default (empty) excludes nothing.
 
     Each Itinerary exposes: legs (list[Leg]), depart_at / arrive_at (datetime,
     naive local time), total_duration (timedelta; total_minutes for a float),
@@ -424,8 +466,9 @@ def plan(origin: Location, dest: Location, depart_at: datetime,
     timedeltas, and cost_level. Use to_dict()/to_json() or itinerary_records /
     leg_records for JSON or tabular output.
     """
-    return _rank(_candidates(origin, dest, depart_at, timetable, connector,
-                             conditions, horizon), objective, top_n)
+    candidates = _candidates(origin, dest, depart_at, timetable, connector,
+                             conditions, horizon)
+    return _rank(_apply_exclusions(candidates, exclude_modes), objective, top_n)
 
 
 def plan_multi(origin: Location, dest: Location, depart_at: datetime,
@@ -433,14 +476,56 @@ def plan_multi(origin: Location, dest: Location, depart_at: datetime,
                conditions: frozenset[str] = frozenset(),
                objective: Objective = Objective.FASTEST,
                top_n: int = 3,
-               horizon: timedelta = timedelta(days=2)) -> list[Itinerary]:
+               horizon: timedelta = timedelta(days=2),
+               exclude_modes: frozenset = frozenset()) -> list[Itinerary]:
     """Like plan(), but pools candidates from SEVERAL connectors before the
     single Pareto/ranking pass. Use it to diversify the first/last mile -- e.g. a
     car-access and a transit-access connector -- so a drive-to-airport itinerary
     and a walk-to-train one compete on one frontier (the latter would otherwise
-    never be generated). Same return contract as plan()."""
+    never be generated). `exclude_modes` is applied to the pooled candidates as in
+    plan(). Same return contract as plan()."""
     pooled: list[Itinerary] = []
     for connector in connectors:
         pooled += _candidates(origin, dest, depart_at, timetable, connector,
                               conditions, horizon)
-    return _rank(pooled, objective, top_n)
+    return _rank(_apply_exclusions(pooled, exclude_modes), objective, top_n)
+
+
+def plan_labeled(origin: Location, dest: Location, depart_at: datetime,
+                 timetable: Timetable, connectors, *,
+                 objectives, conditions: frozenset[str] = frozenset(),
+                 exclude_modes: frozenset = frozenset(),
+                 horizon: timedelta = timedelta(days=2)) -> list:
+    """The single best itinerary for EACH objective, deduped -- the "choices
+    labelled by purpose" view (e.g. one Fastest, one Cheapest, one Greenest card).
+
+    `objectives` is an ordered sequence of (Objective, label) pairs. A trip that
+    wins several objectives appears once, carrying all the labels it won, under the
+    earliest objective it wins (so the result order follows `objectives`).
+    Candidates are pooled from the connectors ONCE and then ranked per objective
+    (cheap), so this costs about one plan_multi regardless of how many objectives
+    are requested. `exclude_modes` is applied to the pool as in plan().
+
+    Returns a list of (Itinerary, list[str]); empty when no route exists.
+    """
+    pooled: list[Itinerary] = []
+    for connector in connectors:
+        pooled += _candidates(origin, dest, depart_at, timetable, connector,
+                              conditions, horizon)
+    pooled = _apply_exclusions(pooled, exclude_modes)
+    chosen: list[list] = []          # [itinerary, [labels]] in objective order
+    at: dict[tuple, int] = {}        # signature -> index in chosen
+    for objective, label in objectives:
+        top = _rank(pooled, objective, 1)
+        if not top:
+            continue
+        leader = top[0]
+        sig = _signature(leader)
+        if sig in at:
+            labels = chosen[at[sig]][1]
+            if label not in labels:
+                labels.append(label)
+        else:
+            at[sig] = len(chosen)
+            chosen.append([leader, [label]])
+    return [(itin, labels) for itin, labels in chosen]
