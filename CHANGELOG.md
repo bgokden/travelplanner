@@ -34,15 +34,18 @@ All notable changes to this project are documented here. The format is based on
   trimmed from the prebuilt hub network: when an explicit timetable routes nothing, it
   retries once with a trip-scoped air network (the fix that makes Madrid -> Santorini
   route).
-- Curated national long-distance rail feeds. The Mobility Database catalog carries no
-  national rail feed for these countries -- only regional associations, often with
-  oversized bounding boxes that "cover" a corridor they do not actually serve -- so an
-  auto-composed trip got local stops but no intercity through-train, and most rail
-  corridors fell back to a car. The auto-composer now also fetches a curated publisher
-  feed for any country the trip touches (starting with gtfs.de's German long-distance
-  feed, ~0.4 MB), merged alongside the catalog feeds (which still supply local access),
-  and credited in `attribution`. Berlin -> Hamburg now surfaces the ICE and Munich ->
-  Salzburg the cross-border EC, where before both returned only a drive.
+- Curated national rail feeds. The Mobility Database catalog carries no national rail
+  feed for these countries -- only regional associations, often with oversized bounding
+  boxes that "cover" a corridor they do not actually serve -- so an auto-composed trip
+  got local stops but no intercity through-train, and most rail corridors fell back to a
+  car. The auto-composer now also fetches curated publisher feeds for any country the
+  trip touches (currently gtfs.de's German long-distance ~0.4 MB and regional ~9 MB
+  feeds), merged alongside the catalog feeds, and credited in `attribution`. The
+  regional feed matters for access: an intercity station past walking distance is now
+  reached by local public transport (walk -> a nearby stop -> regional -> the main
+  station -> the express), not by falling back to a car. Berlin -> Hamburg is now
+  walk+train (the ICE) and Munich -> Salzburg surfaces the cross-border EC, where before
+  both returned only a drive.
 - Ground transit in door-to-door planning, end to end. The GTFS loader honours
   station/platform hierarchy (`parent_station`): a trip departs a platform, but a
   coordinate snaps to the station, so the loader links the two with a short footpath

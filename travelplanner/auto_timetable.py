@@ -63,6 +63,16 @@ _CURATED_RAIL_FEEDS = (
          url="https://download.gtfs.de/germany/fv_free/latest.zip",
          min_lat=47.2, min_lon=5.8, max_lat=55.1, max_lon=15.1,
          license_url="https://gtfs.de/en/feeds/de_fv/"),
+    # Regional rail too (RE/RB/S-Bahn): without it a traveller cannot reach an
+    # intercity station that is past walking distance by public transport, and the
+    # plan falls back to a car (a 2.5 km hop to Berlin Hbf, say). With it the access
+    # is a real local-transit leg (walk -> Alexanderplatz -> regional -> Hbf -> ICE).
+    # ~9 MB, vs ~250 MB for the complete feed, so it stays cheap to fetch and clip.
+    Feed(id="de-rv-gtfsde", name="gtfs.de Regionalverkehr (German regional rail)",
+         provider="gtfs.de / DELFI", country="DE",
+         url="https://download.gtfs.de/germany/rv_free/latest.zip",
+         min_lat=47.2, min_lon=5.8, max_lat=55.1, max_lon=15.1,
+         license_url="https://gtfs.de/en/feeds/de_rv/"),
 )
 
 # Only airports within this distance of an endpoint can serve the trip; scoping

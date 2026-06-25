@@ -81,6 +81,43 @@ def test_merges_curated_national_rail_for_german_trip(monkeypatch):
     assert not any("curated" in n for n in notes)                  # it loaded cleanly
 
 
+def test_regional_feed_bridges_transit_access_to_intercity_station(monkeypatch):
+    # A traveller reaches an intercity station past walking distance by local transit
+    # (the regional feed), not a car: walk -> local stop -> regional -> main station ->
+    # intercity train. Without the regional hop the transit access would dead-end to a
+    # drive (the main station being ~3 km from the door).
+    from datetime import datetime
+    from travelplanner.trips import plan_trip
+
+    def load(feed):
+        tt = Timetable()
+        if "rv" in feed.id:                              # regional: door area -> Hbf
+            tt.add_stop(Stop("LOC", "Local stop", 52.500, 13.400))   # at the origin
+            tt.add_stop(Stop("HBF", "Main Hbf", 52.525, 13.369))     # ~3 km away
+            tt.add_trip(make_trip("RE", Mode.TRAIN, [
+                ("LOC", "08:30", "08:30"), ("HBF", "08:45", "08:45")]))
+        else:                                            # long-distance: Hbf -> dest
+            tt.add_stop(Stop("HBF", "Main Hbf", 52.525, 13.369))
+            tt.add_stop(Stop("DST", "Dest Hbf", 53.550, 9.990))
+            tt.add_trip(make_trip("ICE", Mode.TRAIN, [
+                ("HBF", "09:00", "09:00"), ("DST", "11:00", "11:00")]))
+        return tt
+
+    monkeypatch.setattr(auto_timetable, "catalog", lambda: {})
+    monkeypatch.setattr(auto_timetable, "feeds_for_trip",
+                        lambda o, d, catalog=None: [])
+    monkeypatch.setattr(auto_timetable, "_load_feed", load)
+    origin = Location("O", LocationType.CITY, 52.500, 13.400)
+    dest = Location("D", LocationType.CITY, 53.550, 9.990)
+    tt, _ = auto_timetable.build_default_timetable(origin, dest, air=False)
+    res = plan_trip(origin, dest, datetime(2026, 7, 1, 8, 0), tt,
+                    access="transit", top_n=3)
+    assert res
+    modes = [leg.mode for leg in res[0].legs]
+    assert modes[0] is Mode.WALK and Mode.CAR not in modes      # reached by transit, not car
+    assert sum(1 for m in modes if m is Mode.TRAIN) >= 2        # regional hop + intercity
+
+
 def test_curated_rail_skipped_outside_its_country(monkeypatch):
     # A trip with no endpoint inside a curated feed's box does not fetch it (O/D are in
     # Amsterdam, west of the German box).
