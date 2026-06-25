@@ -23,6 +23,13 @@ def test_maxspeed_unparseable_falls_back():
     assert parse_maxspeed(None, 42) == 42
 
 
+def test_maxspeed_zero_falls_back():
+    # A "maxspeed=0" data error is not a usable travel speed (and would divide by
+    # zero downstream); treat it as unset and use the fallback.
+    assert parse_maxspeed("0", 30) == 30
+    assert parse_maxspeed("0 mph", 30) == 30
+
+
 def test_seasonal_closure_winter_range():
     v = parse_seasonal_closure(
         {"motor_vehicle:conditional": "no @ (Nov-May)"})

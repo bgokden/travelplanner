@@ -28,6 +28,12 @@ All notable changes to this project are documented here. The format is based on
   preference, and rail toggle in one click (`/api/examples`); flight legs drawn as
   true great-circle arcs, so a long-haul flight curves the way it actually flies
   instead of a straight Mercator line (date-line safe); and a mode-colour map legend.
+- `road=True` now applies to `access="both"` (it road-backs the car arm; the transit
+  arm stays geometric) instead of being rejected, so a pooled drive-or-transit trip can
+  use real streets for its driving legs. The demo also recovers trips to small airports
+  trimmed from the prebuilt hub network: when an explicit timetable routes nothing, it
+  retries once with a trip-scoped air network (the fix that makes Madrid -> Santorini
+  route).
 - Ground transit in door-to-door planning, end to end. The GTFS loader honours
   station/platform hierarchy (`parent_station`): a trip departs a platform, but a
   coordinate snaps to the station, so the loader links the two with a short footpath
@@ -301,6 +307,9 @@ All notable changes to this project are documented here. The format is based on
   than failing, so a network blip never breaks an otherwise-usable cache.
 
 ### Fixed
+- `parse_maxspeed` treats a non-positive `maxspeed` (e.g. a "maxspeed=0" OSM data
+  error) as unset and uses the fallback speed, instead of returning 0 and dividing by
+  zero in the travel-time estimate downstream.
 - Route-quality fixes from a multi-city logic check (10 city pairs, three personas).
   (1) Implausible transit journeys are dropped before ranking: a vehicle leg that rode
   far around for its endpoints, a route whose legs sum to a gross multiple of the

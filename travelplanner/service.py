@@ -246,7 +246,8 @@ def plan_response(origin, dest, depart_at: datetime, timetable=None, *,
                   prefer: str = DEFAULT_TRANSPORT_PREFERENCE, top_n: int = 4,
                   road: bool = False,
                   region: str | None = None, data_dir: str | None = None,
-                  turn_aware: bool = False, geocoder=None) -> dict:
+                  turn_aware: bool = False, geocoder=None,
+                  online: bool = True) -> dict:
     """Plan a door-to-door trip and shape it for the map UI (JSON-safe dict).
 
     `prefer` is a named transport preference (see TRANSPORT_PREFERENCES) -- e.g.
@@ -268,25 +269,45 @@ def plan_response(origin, dest, depart_at: datetime, timetable=None, *,
     d = _coerce(dest, geocoder=geocoder)
     # Capture the auto-compose notes (coverage gaps, feeds that could not be
     # fetched) so a missing-transit outcome reads as honest, not broken.
+    # 'real streets' (road) only backs a car first/last mile. The 'car' and 'both'
+    # presets have one; a walk-only 'transit' preset does not, so road is dropped
+    # there (it would otherwise be rejected). turn_aware needs road, so it follows.
+    primary_road = road and access != "transit"
     drove_to_hub = False
+
+    def _plan(tt):
+        """Rank choices for one timetable. Walk-only transit access can reach no hub
+        (a far airport with no feeder service), dead-ending the preference; retry once
+        pooling car access ('both') so the trip still routes. The 'both' arm has a car
+        leg, so road can apply on that retry."""
+        nonlocal drove_to_hub
+        out = plan_trip_choices(
+            o, d, depart_at, tt, objectives=_CHOICE_OBJECTIVES,
+            road=primary_road, turn_aware=turn_aware and primary_road,
+            region=region, data_dir=data_dir, geocoder=geocoder, **pref)
+        if not out and access == "transit":
+            out = plan_trip_choices(
+                o, d, depart_at, tt, objectives=_CHOICE_OBJECTIVES,
+                road=road, turn_aware=turn_aware and road, region=region,
+                data_dir=data_dir, geocoder=geocoder, access="both",
+                exclude_modes=pref["exclude_modes"])
+            drove_to_hub = bool(out)
+        return out
+
     with warnings_mod.catch_warnings(record=True) as caught:
         warnings_mod.simplefilter("always")
-        labeled = plan_trip_choices(
-            o, d, depart_at, timetable, objectives=_CHOICE_OBJECTIVES,
-            road=road, turn_aware=turn_aware, region=region, data_dir=data_dir,
-            geocoder=geocoder, **pref)
-        # Walk-only transit access can reach no hub when the nearest airport/station
-        # is far and no feeder service is loaded (e.g. a long-haul flight from a city
-        # with no airport rail) -- which would dead-end the default preference. Retry
-        # pooling car access so the trip still routes; the mode preference is kept
-        # (the planner restores an excluded mode only when it is the sole way there).
-        if not labeled and access == "transit":
-            labeled = plan_trip_choices(
-                o, d, depart_at, timetable, objectives=_CHOICE_OBJECTIVES,
-                road=road, turn_aware=turn_aware, region=region, data_dir=data_dir,
-                geocoder=geocoder, access="both",
-                exclude_modes=pref["exclude_modes"])
-            drove_to_hub = bool(labeled)
+        labeled = _plan(timetable)
+        # Coverage fallback: the prebuilt flight network is trimmed to well-connected
+        # hubs (a route-count threshold), so a small regional airport (e.g. Santorini/
+        # JTR, below it) can be absent and dead-end the trip. When an explicit timetable
+        # found nothing, retry once with a trip-scoped flight network (airports near the
+        # endpoints, no hub-degree filter), which includes those airports. Air-only
+        # keeps it cheap -- no GTFS download.
+        if not labeled and timetable is not None:
+            from travelplanner.auto_timetable import build_default_timetable
+            air_tt, _notes = build_default_timetable(o, d, ground=False, download=online)
+            if air_tt.stops:
+                labeled = _plan(air_tt)
     # Transit-first preferences (access == "transit": the transit and train presets)
     # lead with a rail/ferry option when one exists, so the headline card is the train
     # rather than a flight or drive that merely happens to be fastest. Stable, so the
@@ -297,6 +318,10 @@ def plan_response(origin, dest, depart_at: datetime, timetable=None, *,
             leg.mode in (Mode.TRAIN, Mode.FERRY) for leg in il[0].legs) else 1)
     labeled = labeled[:top_n]
     warnings: list = [str(w.message) for w in caught]
+    # Be honest when 'real streets' was asked for but had no car leg to back.
+    if road and access == "transit" and not drove_to_hub:
+        warnings.append("'real streets' applies to car legs only; the transit "
+                        "preference has none, so it was not used.")
     itineraries = [it for it, _ in labeled]
     options = []
     for it, labels in labeled:
@@ -803,7 +828,7 @@ class _Handler(BaseHTTPRequestHandler):
                 prefer=first("prefer", DEFAULT_TRANSPORT_PREFERENCE),
                 top_n=top_n, road=road,
                 region=(first("region") or srv.region), data_dir=srv.data_dir,
-                turn_aware=srv.turn_aware, geocoder=srv.geocoder)
+                turn_aware=srv.turn_aware, geocoder=srv.geocoder, online=srv.online)
         except (ValueError, KeyError) as exc:
             self._json({"error": str(exc)}, 400)
             return

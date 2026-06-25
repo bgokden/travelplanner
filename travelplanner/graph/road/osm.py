@@ -254,7 +254,10 @@ def parse_maxspeed(value: str | None, fallback_kmh: float) -> float:
     if not num:
         return fallback_kmh
     speed = float(num.group())
-    return speed * 1.609344 if mph else speed
+    speed = speed * 1.609344 if mph else speed
+    # A zero/negative maxspeed (e.g. a "maxspeed=0" data error) is not a usable
+    # travel speed and would divide by zero downstream; treat it as unset.
+    return speed if speed > 0 else fallback_kmh
 
 
 def _is_oneway(tags: dict[str, str]) -> int:

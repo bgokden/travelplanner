@@ -450,11 +450,14 @@ def test_plan_trip_asymmetric_with_road_raises():
                   access="transit", egress="car", road=True)
 
 
-def test_plan_trip_access_both_with_road_raises():
+def test_plan_trip_access_both_with_road_routes():
+    # access='both' pools a car arm with the transit arm; with road=True the car arm
+    # is road-backed. This is a valid combination, so it must route, not raise.
     origin, dest, depart = sample_trip()
-    with pytest.raises(ValueError):
-        plan_trip(origin, dest, depart, sample_timetable(),
-                  access="both", road=True)
+    result = plan_trip(origin, dest, depart, sample_timetable(),
+                       access="both", road=True)
+    assert result
+    assert any(leg.mode is Mode.CAR for it in result for leg in it.legs)
 
 
 def test_plan_trip_transit_access_with_road_raises():

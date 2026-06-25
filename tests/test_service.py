@@ -113,6 +113,43 @@ def test_plan_response_transit_preference_leads_with_rail():
                    for opt in res2["options"] for leg in opt["legs"])
 
 
+def test_plan_response_falls_back_to_trip_scoped_air_for_trimmed_airport(monkeypatch):
+    # When the supplied (prebuilt) timetable can't route the trip -- e.g. a small
+    # airport trimmed from the hub network -- plan_response retries once with a
+    # trip-scoped air network. Here the supplied feed is empty and the trip is
+    # transoceanic (no ground), so only the fallback can route it.
+    import travelplanner.auto_timetable as auto
+    from travelplanner.graph.scheduled import Stop, Timetable, make_trip
+    from travelplanner.graph.schema import NodeType
+    from travelplanner.models import CostLevel, Mode
+
+    def fake_air(o, d, *, download=True, air=True, ground=True):
+        assert ground is False                         # air-only, no GTFS download
+        tt = Timetable()
+        tt.add_stop(Stop("OA", "Origin Air", 40.64, -73.78, NodeType.AIRPORT))
+        tt.add_stop(Stop("DA", "Dest Air", 35.55, 139.78, NodeType.AIRPORT))
+        tt.add_trip(make_trip("F", Mode.FLIGHT, [
+            ("OA", "09:00", "09:00"), ("DA", "20:00", "20:00")],
+            cost_level=CostLevel.HIGH))
+        return tt, []
+
+    monkeypatch.setattr(auto, "build_default_timetable", fake_air)
+    res = plan_response("40.71,-74.01", "35.68,139.69", datetime(2026, 7, 1, 6, 0),
+                        Timetable(), prefer="fastest", online=False)   # empty supplied feed
+    assert res["options"], "the trip-scoped air fallback must rescue a trimmed-airport trip"
+    assert any(leg["mode"] == "flight"
+               for opt in res["options"] for leg in opt["legs"])
+
+
+def test_plan_response_notes_real_streets_ignored_for_transit():
+    # 'real streets' (road) backs car legs only; the walk-only transit preference has
+    # none, so it is dropped and the response says so rather than silently ignoring it.
+    o, d, dep = sample_trip()
+    res = plan_response(o, d, dep, sample_timetable(), prefer="transit", road=True)
+    assert res["options"]
+    assert any("real streets" in w for w in res["warnings"])
+
+
 def test_plan_response_unknown_prefer_falls_back():
     # An unknown preference is lenient: it falls back to the default (transit) and
     # plans normally rather than raising, so bad input never 500s the demo.

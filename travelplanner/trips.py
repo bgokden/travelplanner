@@ -175,11 +175,13 @@ def _validate_modes(access: str, egress: str | None, road: bool,
                          "also take a separate egress mode. Use single access/"
                          "egress modes for an asymmetric trip.")
     asymmetric = egress is not None and egress != access
-    if road and (access in ("transit", "both") or asymmetric):
-        raise ValueError("road=True needs car access/egress on both ends; for a "
-                         "transit, 'both', or asymmetric first/last mile (which are "
-                         "geometric) drop road, or build connectors and pass "
-                         "connector=.")
+    # 'both' road-backs its car arm (the transit arm stays geometric), so it is
+    # allowed. A pure 'transit' or asymmetric first/last mile has no car leg to back
+    # and is geometric, so road cannot apply there.
+    if road and (access == "transit" or asymmetric):
+        raise ValueError("road=True needs a car first/last mile; a 'transit' or "
+                         "asymmetric access/egress is geometric. Drop road, or build "
+                         "connectors and pass connector=.")
 
 
 def _select_connectors(origin: Location, dest: Location, timetable: Timetable, *,
@@ -193,7 +195,13 @@ def _select_connectors(origin: Location, dest: Location, timetable: Timetable, *
     if connector is not None:
         return [connector]
     if access == "both":
-        return [_mode_connector("car", timetable), _mode_connector("transit", timetable)]
+        # Pool a car arm and a (walk-only) transit arm on one frontier. With road=True
+        # the car arm is road-backed (real street geometry / turn-aware) when a region
+        # covers the trip, falling back to the geometric car connector otherwise; the
+        # transit arm is always geometric.
+        car = _road_connector(origin, dest, timetable, region, data_dir, turn_aware) if road else None
+        return [car or _mode_connector("car", timetable),
+                _mode_connector("transit", timetable)]
     if egress is not None and egress != access:
         # Direct (no-transit) ground option follows the first-mile mode, so a short
         # door-to-door hop is classified the same as the symmetric access mode.
@@ -290,9 +298,10 @@ def plan_trip(origin, dest, depart_at: datetime | None = None,
     as `access`). For example `access="transit", egress="car"` walks to the
     station for the line-haul but takes a car (rental/taxi) from the arrival stop
     to the door -- a common asymmetric trip. `egress` is "car" or "transit" (not
-    "both"). Asymmetric and "transit"/"both" first/last miles are geometric, so
-    `road`/`turn_aware` are rejected with them (raise; for road-backed car legs
-    there, build connectors and pass `connector=`).
+    "both"). `road`/`turn_aware` back a car first/last mile: they apply to "car" and
+    to the car arm of "both" (its transit arm stays geometric), but a "transit" or
+    asymmetric first/last mile has no car leg to back, so `road` is rejected there
+    (raise; build connectors and pass `connector=` for road-backed car legs).
 
     Note: a "transit" access or egress reaches a stop only within a short walk; if
     no stop is in range, that end has no transit leg and the trip falls back to the
