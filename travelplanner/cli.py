@@ -179,6 +179,12 @@ def _cmd_attribution(args) -> int:
                                      for f in covering[1:])
                     print("note: other feeds cover this trip but are not used: "
                           f"{alts}\n")
+        # National rail feeds the planner adds beyond the catalog (gtfs.de etc.),
+        # credited when the trip touches their country box (see auto_timetable).
+        from travelplanner.auto_timetable import _CURATED_RAIL_FEEDS
+        feeds += [f for f in _CURATED_RAIL_FEEDS
+                  if f.covers(origin.lat, origin.lon)
+                  or f.covers(dest.lat, dest.lon)]
     elif args.origin or args.destination:
         print("note: give both origin and destination for per-feed licenses\n")
     print("Data sources travelplanner auto-fetches (credit them when you use or "

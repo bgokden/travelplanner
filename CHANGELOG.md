@@ -34,6 +34,15 @@ All notable changes to this project are documented here. The format is based on
   trimmed from the prebuilt hub network: when an explicit timetable routes nothing, it
   retries once with a trip-scoped air network (the fix that makes Madrid -> Santorini
   route).
+- Curated national long-distance rail feeds. The Mobility Database catalog carries no
+  national rail feed for these countries -- only regional associations, often with
+  oversized bounding boxes that "cover" a corridor they do not actually serve -- so an
+  auto-composed trip got local stops but no intercity through-train, and most rail
+  corridors fell back to a car. The auto-composer now also fetches a curated publisher
+  feed for any country the trip touches (starting with gtfs.de's German long-distance
+  feed, ~0.4 MB), merged alongside the catalog feeds (which still supply local access),
+  and credited in `attribution`. Berlin -> Hamburg now surfaces the ICE and Munich ->
+  Salzburg the cross-border EC, where before both returned only a drive.
 - Ground transit in door-to-door planning, end to end. The GTFS loader honours
   station/platform hierarchy (`parent_station`): a trip departs a platform, but a
   coordinate snaps to the station, so the loader links the two with a short footpath
@@ -307,6 +316,11 @@ All notable changes to this project are documented here. The format is based on
   than failing, so a network blip never breaks an otherwise-usable cache.
 
 ### Fixed
+- The implausible-transit guard now also catches a short trip stitched into an
+  hours-long ride (a ~35 km hop returned as a 15 h walk+train), which slipped through
+  because the per-leg speed and detour checks only applied past 75 km. An absolute
+  ride-time sanity (a generous base plus a low overall km/h, counting ride time only so
+  a sparse schedule's wait is not penalised) drops it at any distance.
 - `parse_maxspeed` treats a non-positive `maxspeed` (e.g. a "maxspeed=0" OSM data
   error) as unset and uses the fallback speed, instead of returning 0 and dividing by
   zero in the travel-time estimate downstream.

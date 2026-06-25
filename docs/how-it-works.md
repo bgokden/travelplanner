@@ -226,7 +226,11 @@ you can omit it: `plan_trip` auto-composes one for the trip — the OpenFlights
 flight network plus the GTFS feed(s) selected by location from the Mobility
 Database catalog, downloaded and cached on first use. A covering feed that fails to
 download or has no service in the trip corridor is skipped and the next is tried, so
-one dead catalog link does not leave the trip without ground transit. Rail feeds
+one dead catalog link does not leave the trip without ground transit. The catalog is
+uneven, though — for some countries it lists only regional associations and no
+national long-distance rail, so a corridor would get local stops but no intercity
+through-train; for those, a curated publisher feed is fetched too (currently gtfs.de
+for German long-distance rail), merged alongside the catalog feeds. Rail feeds
 that model a station as a parent of its platforms route correctly — a coordinate
 snaps to the station and reaches the trains departing its platforms. Whether a train
 leads the results depends on the objective: door-to-door a short hop is often faster

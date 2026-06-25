@@ -186,6 +186,23 @@ def test_implausible_detour_transit_is_dropped():
                    for it in results for leg in it.legs)   # the detour train is dropped
 
 
+def test_implausible_short_trip_absurd_ride_is_dropped():
+    # Below the 75 km gate the speed/detour checks do not apply, so a short hop the
+    # scan stitched into an hours-long ride (a ~35 km trip "riding" 15 h) must still be
+    # caught by the absolute ride-time sanity; a normal 30 min regional train is kept.
+    from travelplanner.graph.coupling.planner import _implausible_transit
+    o = place("o", LocationType.CITY, 52.09, 5.11)         # Utrecht-ish
+    d = place("d", LocationType.CITY, 52.37, 4.90)         # Amsterdam-ish (~35 km)
+    absurd = Leg(mode=Mode.TRAIN, from_loc=o, to_loc=d, distance_km=35.0,
+                 travel_time=timedelta(hours=15), overhead=timedelta(),
+                 cost_level=CostLevel.MEDIUM)
+    assert _implausible_transit(Itinerary(legs=[absurd], depart_at=DEP, score=0.0))
+    ok = Leg(mode=Mode.TRAIN, from_loc=o, to_loc=d, distance_km=35.0,
+             travel_time=timedelta(minutes=30), overhead=timedelta(),
+             cost_level=CostLevel.MEDIUM)
+    assert not _implausible_transit(Itinerary(legs=[ok], depart_at=DEP, score=0.0))
+
+
 def test_short_trip_is_pure_ground():
     tt = Timetable()
     tt.add_stop(_stop("Far1", 47.0, 7.0))

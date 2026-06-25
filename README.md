@@ -275,6 +275,9 @@ carries its own licenses — credit these when you use or redistribute the data:
 - **Ground transit** — GTFS schedule feeds discovered through the
   [Mobility Database](https://mobilitydatabase.org/) catalog (catalog metadata
   under CC0); each feed is under its own license, set by the publishing agency.
+  For countries whose catalog entries lack a national long-distance rail feed, a
+  curated publisher feed is fetched too — currently [gtfs.de](https://gtfs.de/)
+  (German long-distance rail, DELFI data) — credited the same way.
 - **Driving** — street routing uses
   [OpenStreetMap](https://www.openstreetmap.org/copyright) extracts (fetched via
   [Geofabrik](https://download.geofabrik.de/)) under the ODbL; credit

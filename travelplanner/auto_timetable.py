@@ -48,6 +48,23 @@ _MAX_FEED_ATTEMPTS = 4
 # plannable; the first contributing feed is always taken even if it alone exceeds it.
 _MAX_MERGED_TRIPS = 80000
 
+# Curated national long-distance rail feeds, fetched straight from the publisher
+# because the Mobility Database catalog carries no national rail feed for these
+# countries -- only regional associations (often with oversized bounding boxes) that
+# do not actually serve an intercity corridor, so a catalog-only compose returns local
+# stops but no through-train. Each is merged for any trip with an endpoint inside its
+# country box, alongside the catalog feeds (which still supply local access stops). The
+# box is country-scale on purpose: an endpoint inside means the feed's trains may serve
+# the trip, including a cross-border run that reaches a neighbour (e.g. the Munich ->
+# Salzburg EC in the German long-distance feed).
+_CURATED_RAIL_FEEDS = (
+    Feed(id="de-fv-gtfsde", name="gtfs.de Fernverkehr (German long-distance rail)",
+         provider="gtfs.de / DELFI", country="DE",
+         url="https://download.gtfs.de/germany/fv_free/latest.zip",
+         min_lat=47.2, min_lon=5.8, max_lat=55.1, max_lon=15.1,
+         license_url="https://gtfs.de/en/feeds/de_fv/"),
+)
+
 # Only airports within this distance of an endpoint can serve the trip; scoping
 # the synthetic flight network to them keeps the scan fast (the full global
 # network is ~44k synthetic flights).
@@ -141,6 +158,26 @@ def build_default_timetable(origin, dest, *, download: bool = True,
                 break
             parts.append(clipped)
             merged_trips += len(clipped.trips)
+
+        # National long-distance rail the catalog lacks: fetch a curated publisher
+        # feed for any country the trip touches and merge its corridor service. These
+        # are known-good (not the catalog's flaky regional entries), so they bypass the
+        # attempt cap and trip-count budget, but still respect the corridor clip. Only
+        # when downloading -- offline relies on the catalog/sample path.
+        if download:
+            for feed in _CURATED_RAIL_FEEDS:
+                if not (feed.covers(*o) or feed.covers(*d)):
+                    continue
+                try:
+                    full = _load_feed(feed)
+                except (OSError, zipfile.BadZipFile, ValueError) as exc:
+                    notes.append(f"curated feed {feed.id} ({feed.name}) unavailable: {exc}")
+                    continue
+                clipped = clip_timetable(full, *bbox)
+                if clipped.trips:
+                    parts.append(clipped)
+                else:
+                    notes.append(f"curated feed {feed.id} has no corridor service")
 
     # A tz-less ground feed joined to the tz-aware flight network gets each of its
     # stops the nearest located zone, instead of the table's most-common one.

@@ -56,6 +56,44 @@ def test_notes_when_feed_fetch_fails(monkeypatch):
     assert any("unavailable" in n for n in notes)
 
 
+def test_merges_curated_national_rail_for_german_trip(monkeypatch):
+    # The catalog carries no national rail feed, so a curated publisher feed is merged
+    # for a trip touching its country box (Germany), supplying the intercity train the
+    # catalog's regional feeds lack.
+    muc = Location("Munich", LocationType.CITY, 48.14, 11.56)
+    nbg = Location("Nuremberg", LocationType.CITY, 49.45, 11.08)
+    monkeypatch.setattr(auto_timetable, "catalog", lambda: {})
+    monkeypatch.setattr(auto_timetable, "feeds_for_trip",
+                        lambda o, d, catalog=None: [])
+
+    def load(feed):
+        assert feed.country == "DE"                     # only the curated DE feed loads
+        tt = Timetable()
+        tt.add_stop(Stop("MUC", "Munich Hbf", 48.14, 11.56))
+        tt.add_stop(Stop("NBG", "Nuremberg Hbf", 49.45, 11.08))
+        tt.add_trip(make_trip("ICE", Mode.TRAIN, [
+            ("MUC", "09:00", "09:00"), ("NBG", "10:00", "10:00")]))
+        return tt
+
+    monkeypatch.setattr(auto_timetable, "_load_feed", load)
+    tt, notes = auto_timetable.build_default_timetable(muc, nbg, air=False)
+    assert "ICE" in tt.trips and {"MUC", "NBG"} <= set(tt.stops)   # curated rail merged
+    assert not any("curated" in n for n in notes)                  # it loaded cleanly
+
+
+def test_curated_rail_skipped_outside_its_country(monkeypatch):
+    # A trip with no endpoint inside a curated feed's box does not fetch it (O/D are in
+    # Amsterdam, west of the German box).
+    loaded = []
+    monkeypatch.setattr(auto_timetable, "catalog", lambda: {})
+    monkeypatch.setattr(auto_timetable, "feeds_for_trip",
+                        lambda o, d, catalog=None: [])
+    monkeypatch.setattr(auto_timetable, "_load_feed",
+                        lambda f: loaded.append(f.id) or Timetable())
+    auto_timetable.build_default_timetable(O, D, air=False)
+    assert loaded == []                                  # no curated feed fetched
+
+
 def test_skips_dead_feed_and_uses_next_covering_feed(monkeypatch):
     """A feed whose download fails (a dead catalog URL) must not leave the trip with
     no ground transit: the next covering feed is tried instead."""

@@ -58,6 +58,16 @@ _MIN_LEG_KMH = 25.0
 _MAX_DETOUR_RATIO = 2.0
 _MAX_JOURNEY_LEGS = 10
 
+# Absolute ride-time sanity at ANY distance (the per-leg speed and detour checks above
+# only apply past _PLAUSIBLE_MIN_KM, so a short trip is otherwise unguarded): the time
+# actually spent moving must not exceed a generous floor for the straight-line trip,
+# or a short hop stitched into an hours-long chain (a 35 km trip returned as a 15 h
+# ride) slips through. Generous -- a base allowance plus a low overall km/h -- so a
+# real regional or long ride is kept; it counts ride time only (not waits), so a
+# sparse-but-legitimate schedule with a long wait is not flagged.
+_RIDE_TIME_BASE_H = 3.0
+_MIN_OVERALL_RIDE_KMH = 15.0
+
 # A preferred-mode exclusion (a traveller who will not fly) suppresses candidates
 # using the excluded mode -- but only while a same-day alternative survives. If the
 # best remaining option is slower than this, the excluded mode is the only realistic
@@ -283,9 +293,19 @@ def _transit_itinerary(origin: Location, dest: Location, depart_at: datetime,
 
 def _implausible_transit(itin: Itinerary) -> bool:
     """True for a transit itinerary no traveller would take (see the guard constants):
-    too many legs, a single vehicle leg that rode far around for its endpoints, or a
-    journey whose leg distances sum to a gross multiple of the straight-line trip."""
+    too many legs, a ride far longer than the straight-line trip warrants, a single
+    vehicle leg that rode far around for its endpoints, or a journey whose leg
+    distances sum to a gross multiple of the straight-line trip."""
     if len(itin.legs) > _MAX_JOURNEY_LEGS:
+        return True
+    trip = haversine(itin.legs[0].from_loc.lat, itin.legs[0].from_loc.lon,
+                     itin.legs[-1].to_loc.lat, itin.legs[-1].to_loc.lon)
+    # Absolute ride-time sanity at any distance: a short hop stitched into an
+    # hours-long ride (a 35 km trip returned as 15 h) is dropped even below the
+    # distance gate the speed/detour checks use.
+    ride_hours = sum(leg.travel_time.total_seconds()
+                     for leg in itin.legs) / 3600.0
+    if ride_hours > _RIDE_TIME_BASE_H + trip / _MIN_OVERALL_RIDE_KMH:
         return True
     leg_km = 0.0
     for leg in itin.legs:
@@ -297,8 +317,6 @@ def _implausible_transit(itin: Itinerary) -> bool:
         hours = leg.travel_time.total_seconds() / 3600.0
         if gc > _PLAUSIBLE_MIN_KM and hours > 0 and gc / hours < _MIN_LEG_KMH:
             return True                       # a single leg looping via a far stop
-    trip = haversine(itin.legs[0].from_loc.lat, itin.legs[0].from_loc.lon,
-                     itin.legs[-1].to_loc.lat, itin.legs[-1].to_loc.lon)
     return trip > _PLAUSIBLE_MIN_KM and leg_km / trip > _MAX_DETOUR_RATIO
 
 
