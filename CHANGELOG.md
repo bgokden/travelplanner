@@ -284,6 +284,9 @@ All notable changes to this project are documented here. The format is based on
   and are now shared by the road and timetable artifacts.
 
 ### Changed
+- The demo enables the "trains & buses" and "real streets" toggles by default when the
+  server is online, so transit and real road geometry show out of the box (both
+  auto-download data on first use; `--offline` leaves them off).
 - `plan_trip(origin, dest)` is now the minimal call: `depart_at` is optional
   (defaults to now) and the default `objective` is `FASTEST` (was `AIR_PRIORITY`,
   a surprising default for a neutral "best routes" call). Air priority is still

@@ -471,8 +471,8 @@ _UI_HTML = """<!doctype html><html><head><meta charset="utf-8">
   </select>
   <label>Choices to show</label>
   <input id="top" type="number" min="1" max="9" value="4">
-  <label class="chk"><input type="checkbox" id="road"> real streets (car legs, auto-downloads map data)</label>
-  <label class="chk"><input type="checkbox" id="transit"> trains &amp; buses (auto-downloads schedule data; first run slower)</label>
+  <label class="chk"><input type="checkbox" id="road" ROAD_CHECKED> real streets (car legs, auto-downloads map data)</label>
+  <label class="chk"><input type="checkbox" id="transit" TRANSIT_CHECKED> trains &amp; buses (auto-downloads schedule data; first run slower)</label>
   <button id="go">Plan trip</button>
   <label>Examples</label>
   <div id="examples" class="examples"></div>
@@ -753,11 +753,17 @@ try {
 </script></body></html>"""
 
 
-def _ui_html(default_depart: datetime | None = None) -> str:
+def _ui_html(default_depart: datetime | None = None, online: bool = True) -> str:
     depart = default_depart.strftime("%Y-%m-%dT%H:%M") if default_depart else ""
+    # Default the trains & buses and real streets toggles on so the demo shows transit
+    # and real road geometry out of the box -- but only when online, since both
+    # auto-download data (schedules per trip, an OSM region for road) on first use.
+    checked = "checked" if online else ""
     return (_UI_HTML
             .replace("MODE_COLORS_JSON", json.dumps(MODE_COLORS))
-            .replace("DEFAULT_DEPART", depart))
+            .replace("DEFAULT_DEPART", depart)
+            .replace("TRANSIT_CHECKED", checked)
+            .replace("ROAD_CHECKED", checked))
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -777,7 +783,8 @@ class _Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
         if path in ("/", "/index.html"):
-            self._send(_ui_html(self.server.default_depart).encode("utf-8"),
+            self._send(_ui_html(self.server.default_depart,
+                                self.server.online).encode("utf-8"),
                        "text/html; charset=utf-8")
         elif path == "/api/health":
             self._json({"status": "ok"})
