@@ -63,8 +63,8 @@ def test_door_to_door_train_beats_driving():
 
 
 def test_most_direct_surfaces_a_through_train_over_a_faster_change():
-    """A slower direct through-train is never the earliest arrival, so the scan does
-    not generate it -- the one-seat pass does. MOST_DIRECT then ranks it first
+    """A slower direct through-train is never the earliest arrival, so that scan does
+    not generate it -- the fewest-transfers scan does. MOST_DIRECT then ranks it first
     (one scheduled leg), while FASTEST still takes the quicker two-train change, so
     the objectives genuinely differ and the direct ride is a real, distinct option."""
     from travelplanner.graph.query import Objective
@@ -93,6 +93,45 @@ def test_most_direct_surfaces_a_through_train_over_a_faster_change():
     assert fastest
     assert sum(1 for leg in fastest[0].legs if leg.mode is Mode.TRAIN) == 2  # the change
     assert fastest[0].arrive_at < top.arrive_at      # and it really is quicker
+
+
+def test_most_direct_surfaces_a_two_leg_over_a_faster_many_hop_chain():
+    """The fewest-changes scan finds more than a one-seat ride: a slow through-IC plus
+    a short feeder (two vehicles) is surfaced over a quicker three-vehicle chain. The
+    earliest-arrival scan only ever produces the quicker chain, so without the
+    fewest-transfers pass MOST_DIRECT could not show the lower-change option."""
+    from travelplanner.graph.query import Objective
+    tt = Timetable()
+    tt.add_stop(_stop("A", 52.0, 5.0))
+    tt.add_stop(_stop("M", 52.0, 9.0))
+    tt.add_stop(_stop("Z", 52.5, 13.30))
+    tt.add_stop(_stop("D", 52.5, 13.40))           # ~7 km from Z, the destination hub
+    # Slow two-vehicle route: a through-IC to Z, then a short feeder to D.
+    tt.add_trip(make_trip("IC", Mode.TRAIN, [("A", "09:00", "09:00"),
+                                             ("Z", "15:00", "15:00")]))
+    tt.add_trip(make_trip("Feed", Mode.TRAIN, [("Z", "15:10", "15:10"),
+                                               ("D", "15:20", "15:20")]))
+    # Faster three-vehicle chain reaching D earlier with two changes.
+    tt.add_trip(make_trip("c1", Mode.TRAIN, [("A", "09:00", "09:00"),
+                                             ("M", "11:00", "11:00")]))
+    tt.add_trip(make_trip("c2", Mode.TRAIN, [("M", "11:10", "11:10"),
+                                             ("Z", "13:00", "13:00")]))
+    tt.add_trip(make_trip("c3", Mode.TRAIN, [("Z", "13:10", "13:10"),
+                                             ("D", "13:20", "13:20")]))
+    # Tight access radius so Z (~7 km from the door) is not an egress stop -- the only
+    # way to the destination hub D is the feeder, so the low-change route is two trains.
+    conn = GeometricConnector(tt.stops, max_access_km=3.0)
+    origin = place("HomeA", LocationType.HOTEL, 52.01, 5.01)
+    dest = place("HotelD", LocationType.HOTEL, 52.49, 13.41)
+
+    direct = plan(origin, dest, DEP, tt, conn, objective=Objective.MOST_DIRECT)
+    assert direct
+    assert sum(1 for leg in direct[0].legs if leg.mode is Mode.TRAIN) == 2  # IC + feeder
+
+    fastest = plan(origin, dest, DEP, tt, conn, objective=Objective.FASTEST, top_n=6)
+    chain = [it for it in fastest
+             if sum(1 for leg in it.legs if leg.mode is Mode.TRAIN) == 3]
+    assert chain and chain[0].arrive_at < direct[0].arrive_at  # quicker, more changes
 
 
 def test_drive_time_is_monotonic_in_distance():

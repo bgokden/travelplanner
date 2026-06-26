@@ -24,12 +24,15 @@ All notable changes to this project are documented here. The format is based on
   trip that wins several keeps all its labels, generated from one candidate pool so the
   labelled view costs about one ordinary plan.
 - A `MOST_DIRECT` objective and a "Most direct" demo card, ranking by fewest scheduled
-  vehicle legs with transit preferred over a pure drive -- so a single through-train is
-  surfaced over a faster change. The earliest-arrival scan never generates a
-  slower-but-direct ride (it takes whatever arrives soonest), so candidate generation
-  gains a one-seat (single-vehicle) pass that finds the direct service for the objective
-  to rank: Amsterdam -> Berlin now offers the direct IC, not only the change-at-Düsseldorf
-  route, on a date the feed carries the through-service.
+  vehicle legs with transit preferred over a pure drive -- so a through-train is surfaced
+  over a faster many-change route. The earliest-arrival scan never generates a
+  slower-but-lower-change ride (it takes whatever arrives soonest), so candidate
+  generation gains a fewest-transfers (RAPTOR-style) scan: rounds where round k is the
+  earliest arrival using at most k vehicle trips, so the first round to reach a stop is
+  its fewest-changes journey, reconstructed and added to the pool for the objective to
+  rank. Amsterdam -> Berlin now offers the direct IC (plus a short S-Bahn to the door),
+  not only the four-train change-at-Düsseldorf route, on a date the feed carries the
+  through-service.
 - Demo usability: a row of selectable example trips (e.g. Amsterdam to Berlin by
   train, London to New York, Madrid to Santorini) that fill the origin/destination,
   preference, and rail toggle in one click (`/api/examples`); flight legs drawn as

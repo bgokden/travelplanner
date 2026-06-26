@@ -83,9 +83,9 @@ _MODE_SETS = (
     frozenset({Mode.TRAIN, Mode.FERRY}),    # surface transit
 )
 
-# Mode restrictions for the one-seat (single-vehicle) pass that surfaces a direct
+# Mode restrictions for the fewest-changes pass that surfaces a direct or low-change
 # through-service for MOST_DIRECT. Air-only is omitted: the earliest-arrival air
-# candidate is already a direct flight when one exists, so a one-seat air pass would
+# candidate is already the most direct flight when one exists, so an air pass would
 # only duplicate it. All-modes covers a direct flight; surface-transit a direct train.
 _DIRECT_MODE_SETS = (
     None,
@@ -339,57 +339,89 @@ def _implausible_transit(itin: Itinerary) -> bool:
     return trip > _PLAUSIBLE_MIN_KM and leg_km / trip > _MAX_DETOUR_RATIO
 
 
+def _itinerary_from_journey(origin: Location, dest: Location, depart_at: datetime,
+                            access: dict[str, AccessLeg], journey,
+                            e_leg: AccessLeg, e_stop: str,
+                            timetable: Timetable) -> Itinerary | None:
+    """Build a door-to-door Itinerary from an in-network journey plus the chosen
+    egress, or None if the journey is unusable -- a dangling (unlocated) stop, an
+    over-long walk-only route, or an implausible detour / many-hop chain."""
+    if journey is None:
+        return None
+    # Skip a journey riding through a stop with no Stop entry (a dangling trip/footpath
+    # reference): it cannot be located. CSA already skips interior stops, so a feed
+    # with an unregistered interior stop still plans -- only a journey actually
+    # touching the dangling stop is routed around. (Runs first so the coord lookups
+    # below are safe.)
+    if any(leg.from_stop not in timetable.stops
+           or leg.to_stop not in timetable.stops for leg in journey.legs):
+        return None
+    # A walk-only journey (no vehicle leg) bypasses the mode restriction; keep it only
+    # if it is a reasonable walk, not an over-long footpath chain (driving is already
+    # covered by the direct ground candidate).
+    if not any(leg.mode is not Mode.WALK for leg in journey.legs):
+        walk_km = sum(
+            haversine(timetable.stops[leg.from_stop].lat,
+                      timetable.stops[leg.from_stop].lon,
+                      timetable.stops[leg.to_stop].lat,
+                      timetable.stops[leg.to_stop].lon)
+            for leg in journey.legs)
+        if walk_km > _MAX_WALK_ONLY_KM:
+            return None
+    itin = _transit_itinerary(origin, dest, depart_at, access, journey,
+                              e_leg, e_stop, timetable)
+    # Drop an implausible journey (a gross detour, or a many-hop chain stitched from
+    # sparse stops when the real through-service is missing).
+    if _implausible_transit(itin):
+        return None
+    return itin
+
+
 def _transit_candidate(csa: ConnectionScan, origin: Location, dest: Location,
                        depart_at: datetime, access: dict[str, AccessLeg],
                        sources: dict[str, datetime],
                        egress: dict[str, AccessLeg], timetable: Timetable,
                        conditions: frozenset[str],
-                       allowed_modes: frozenset | None,
-                       arrivals_fn=None, query_fn=None) -> Itinerary | None:
-    # arrivals_fn/query_fn default to the earliest-arrival scan; pass the one-seat
-    # pair to surface a single-vehicle through-service instead (same egress ranking,
-    # different journey), so a direct train competes on the frontier for MOST_DIRECT.
-    arrivals_fn = arrivals_fn or csa.arrival_times
-    query_fn = query_fn or csa.query
-    arrivals = arrivals_fn(sources, conditions, allowed_modes)
+                       allowed_modes: frozenset | None) -> Itinerary | None:
+    """The earliest-arriving transit itinerary for a mode set: rank egress stops by
+    door arrival, take the first that yields a plausible journey."""
+    arrivals = csa.arrival_times(sources, conditions, allowed_modes)
     ranked = sorted(
         ((arrivals[sid] + timedelta(seconds=leg.seconds), sid, leg)
          for sid, leg in egress.items() if sid in arrivals),
         key=lambda x: x[0])
     for _, e_stop, e_leg in ranked:
-        journey = query_fn(sources, e_stop, conditions, allowed_modes)
-        if journey is None:
-            continue
-        # Skip a journey that rides through a stop with no Stop entry (a dangling
-        # trip/footpath reference): it cannot be located. CSA already skips interior
-        # stops, so a feed with an unregistered interior stop still plans -- only a
-        # journey actually touching the dangling stop is routed around, rather than
-        # crashing in _transit_itinerary. (Runs first so the coord lookups below
-        # are safe.)
-        if any(leg.from_stop not in timetable.stops
-               or leg.to_stop not in timetable.stops for leg in journey.legs):
-            continue
-        # A walk-only journey (no vehicle leg) bypasses the mode restriction; keep
-        # it only if it is a reasonable walk. A short station-to-station footpath
-        # route is a legitimate no-car option, but an over-long footpath chain is
-        # not -- the direct ground candidate already covers driving.
-        if not any(leg.mode is not Mode.WALK for leg in journey.legs):
-            walk_km = sum(
-                haversine(timetable.stops[leg.from_stop].lat,
-                          timetable.stops[leg.from_stop].lon,
-                          timetable.stops[leg.to_stop].lat,
-                          timetable.stops[leg.to_stop].lon)
-                for leg in journey.legs)
-            if walk_km > _MAX_WALK_ONLY_KM:
-                continue
-        itin = _transit_itinerary(origin, dest, depart_at, access, journey,
-                                  e_leg, e_stop, timetable)
-        # Drop an implausible journey (a gross detour or a many-hop chain stitched
-        # from sparse stops when the real through-service is missing); a less
-        # contorted egress may still work, else no transit candidate is offered.
-        if _implausible_transit(itin):
-            continue
-        return itin
+        itin = _itinerary_from_journey(
+            origin, dest, depart_at, access,
+            csa.query(sources, e_stop, conditions, allowed_modes),
+            e_leg, e_stop, timetable)
+        if itin is not None:
+            return itin
+    return None
+
+
+def _min_transfer_candidate(csa: ConnectionScan, origin: Location, dest: Location,
+                            depart_at: datetime, access: dict[str, AccessLeg],
+                            sources: dict[str, datetime],
+                            egress: dict[str, AccessLeg], timetable: Timetable,
+                            conditions: frozenset[str],
+                            allowed_modes: frozenset | None) -> Itinerary | None:
+    """The fewest-changes transit itinerary for a mode set: rank egress by changes
+    first, then door arrival. Surfaces a direct or low-change ride (e.g. a through-IC
+    plus a short feeder) that the earliest-arrival scan skips for a faster, more-hop
+    route -- the candidate MOST_DIRECT ranks first."""
+    arrivals = csa.min_transfer_arrivals(sources, conditions, allowed_modes)
+    ranked = sorted(
+        ((arrivals[sid][0], arrivals[sid][1] + timedelta(seconds=leg.seconds),
+          sid, leg) for sid, leg in egress.items() if sid in arrivals),
+        key=lambda x: (x[0], x[1]))
+    for _trips, _door, e_stop, e_leg in ranked:
+        itin = _itinerary_from_journey(
+            origin, dest, depart_at, access,
+            csa.min_transfer_query(sources, e_stop, conditions, allowed_modes),
+            e_leg, e_stop, timetable)
+        if itin is not None:
+            return itin
     return None
 
 
@@ -448,15 +480,14 @@ def _candidates(origin: Location, dest: Location, depart_at: datetime,
                                       allowed)
             if itin is not None:
                 candidates.append(itin)
-        # Also offer the most-direct one-seat ride per mode set. The earliest-arrival
-        # scan above takes a faster change over a slower through-service, so a direct
-        # train is never produced; this adds it to the pool for MOST_DIRECT to rank
-        # (a duplicate of an above candidate is dropped by the Pareto dedupe).
+        # Also offer the fewest-changes ride per mode set. The earliest-arrival scan
+        # above takes a faster, more-hop route over a slower direct/low-change one, so
+        # a through-train is never produced; this adds it to the pool for MOST_DIRECT
+        # to rank (a duplicate of an above candidate is dropped by the Pareto dedupe).
         for allowed in _DIRECT_MODE_SETS:
-            itin = _transit_candidate(csa, origin, dest, depart_at, access,
-                                      sources, egress, timetable, conditions,
-                                      allowed, arrivals_fn=csa.one_seat_arrivals,
-                                      query_fn=csa.one_seat_query)
+            itin = _min_transfer_candidate(csa, origin, dest, depart_at, access,
+                                           sources, egress, timetable, conditions,
+                                           allowed)
             if itin is not None:
                 candidates.append(itin)
     return candidates

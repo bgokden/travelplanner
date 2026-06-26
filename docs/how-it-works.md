@@ -204,12 +204,15 @@ for itinerary, labels in choices:
 The candidate pool is generated once and ranked per objective, so the labelled view
 costs about one ordinary plan no matter how many labels you ask for.
 
-`MOST_DIRECT` is worth a note: it ranks by the fewest scheduled vehicle legs — a single
-through-train over a change-at-the-border chain — and prefers a transit ride to a pure
-drive. A slower-but-direct service is never the earliest arrival, so the ordinary scan
-does not generate it; a one-seat (single-vehicle) pass finds it and adds it to the pool
-for this objective to rank. That is what lets a direct train appear when a faster
-multi-leg route also exists — provided the feed carries the through-service on the date.
+`MOST_DIRECT` is worth a note: it ranks by the fewest scheduled vehicle legs — a
+through-train (or a through-train plus a short feeder) over a many-change chain — and
+prefers a transit ride to a pure drive. A lower-change service is often not the earliest
+arrival, so the ordinary scan does not generate it; a fewest-transfers (RAPTOR-style)
+scan does — rounds in which round k is the earliest arrival using at most k vehicle
+trips, so the first round to reach a stop is its fewest-changes journey — and adds it to
+the pool for this objective to rank. That is what lets a direct train appear when a
+faster multi-leg route also exists, provided the feed carries the through-service on the
+date.
 
 ## Driving times respond to the departure
 
