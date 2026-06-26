@@ -24,6 +24,7 @@ import json
 import os
 import time
 import warnings as warnings_mod
+from collections import OrderedDict
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlparse
@@ -45,6 +46,9 @@ from travelplanner.viz import MODE_COLORS, itinerary_segments
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8000
+
+# How many planned responses to keep in the per-server LRU cache.
+_PLAN_CACHE_MAX = 128
 # Identify the demo to Nominatim (required by their usage policy).
 USER_AGENT = "travelplanner-demo/1.0 (+https://github.com/bgokden/travelplanner)"
 # Nominatim asks for at most ~1 request/second; throttle network suggestions.
@@ -827,19 +831,31 @@ class _Handler(BaseHTTPRequestHandler):
             top_n = max(1, min(9, int(first("top", "3"))))
             road = first("road", "") in ("1", "true", "yes", "on")
             transit = first("transit", "") in ("1", "true", "yes", "on")
+            prefer = first("prefer", DEFAULT_TRANSPORT_PREFERENCE)
+            region = first("region") or srv.region
+            # Serve an identical earlier request from the LRU cache (instant), keyed by
+            # everything that shapes the plan. The other inputs (data_dir, turn_aware,
+            # geocoder, online) are fixed for the server's lifetime.
+            cache_key = (origin, dest, depart_at, prefer, top_n, road, transit, region)
+            cached = srv.plan_cache.get(cache_key)
+            if cached is not None:
+                srv.plan_cache.move_to_end(cache_key)
+                self._json(cached)
+                return
             # transit on -> auto-compose a trip-scoped timetable (flight network +
             # covering GTFS feeds) so trains/buses appear; off -> the prebuilt
             # flight-only feed (fast, no per-request feed download).
             timetable = None if transit else srv.timetable
             response = plan_response(
-                origin, dest, depart_at, timetable,
-                prefer=first("prefer", DEFAULT_TRANSPORT_PREFERENCE),
-                top_n=top_n, road=road,
-                region=(first("region") or srv.region), data_dir=srv.data_dir,
+                origin, dest, depart_at, timetable, prefer=prefer,
+                top_n=top_n, road=road, region=region, data_dir=srv.data_dir,
                 turn_aware=srv.turn_aware, geocoder=srv.geocoder, online=srv.online)
         except (ValueError, KeyError) as exc:
             self._json({"error": str(exc)}, 400)
             return
+        srv.plan_cache[cache_key] = response
+        if len(srv.plan_cache) > _PLAN_CACHE_MAX:
+            srv.plan_cache.popitem(last=False)        # evict least-recently-used
         self._json(response)
 
     def log_message(self, fmt, *args) -> None:    # quieter: one concise line
@@ -893,6 +909,11 @@ def make_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT, *,
         # rather than crashing startup (mirrors the timetable fallback above).
         server.airports = ()
     server.geo_cache = {}
+    # Identical plan requests (a repeated example click, a re-submit) return the cached
+    # response instead of re-planning -- a plan is a couple of seconds, so this makes a
+    # repeat instant. Bounded LRU; per-process, so it clears on restart (no staleness
+    # across a feed refresh).
+    server.plan_cache = OrderedDict()
     server.last_nominatim = 0.0
     server.default_depart = default_depart
     server.verbose = verbose

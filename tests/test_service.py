@@ -197,6 +197,39 @@ def test_plan_response_notes_missing_rail_when_autocomposed(monkeypatch):
     assert any("rail" in w.lower() for w in res["warnings"])
 
 
+def test_plan_cache_serves_identical_request_from_cache():
+    """An identical plan request returns the cached response object (no re-plan); a
+    request that differs in any keyed field is planned afresh and cached separately."""
+    import travelplanner.service as service
+
+    srv = service.make_server("127.0.0.1", 0, online=False,
+                              timetable=sample_timetable())
+
+    class _Fake:
+        def __init__(self):
+            self.server = srv
+            self.sent = []
+
+        def _json(self, obj, status=200):
+            self.sent.append((obj, status))
+
+    q = {"origin": ["47.00,7.005"], "dest": ["45.00,9.01"], "transit": ["0"]}
+    try:
+        h1 = _Fake(); service._Handler._handle_plan(h1, q)
+        h2 = _Fake(); service._Handler._handle_plan(h2, q)
+        resp1, resp2 = h1.sent[0][0], h2.sent[0][0]
+        assert "options" in resp1                  # a real plan, not an error
+        assert resp2 is resp1                       # repeat served from cache (same object)
+        assert len(srv.plan_cache) == 1
+        # A request differing in a keyed field (preference) is a cache miss.
+        q2 = dict(q, prefer=["drive"])
+        h3 = _Fake(); service._Handler._handle_plan(h3, q2)
+        assert h3.sent[0][0] is not resp1
+        assert len(srv.plan_cache) == 2
+    finally:
+        srv.server_close()
+
+
 def test_parse_depart_formats_and_default():
     default = datetime(2026, 7, 1, 8, 0)
     assert _parse_depart("", default) is default

@@ -40,6 +40,9 @@ All notable changes to this project are documented here. The format is based on
   preference, and rail toggle in one click (`/api/examples`); flight legs drawn as
   true great-circle arcs, so a long-haul flight curves the way it actually flies
   instead of a straight Mercator line (date-line safe); and a mode-colour map legend.
+  The demo server also caches planned responses (bounded LRU, keyed by origin/dest/
+  departure/preference/toggles), so a repeated example click or re-submit returns
+  instantly instead of re-planning.
 - `road=True` now applies to `access="both"` (it road-backs the car arm; the transit
   arm stays geometric) instead of being rejected, so a pooled drive-or-transit trip can
   use real streets for its driving legs. The demo also recovers trips to small airports
