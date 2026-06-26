@@ -722,7 +722,7 @@ function applyExample(ex){
   $('origin').value = ex.origin; $('dest').value = ex.dest;
   if(ex.depart) $('depart').value = ex.depart;
   if(ex.prefer) $('prefer').value = ex.prefer;        // does not persist; an example is a one-off
-  $('transit').checked = !!ex.transit;                // rail examples need the schedule data
+  if(ex.transit) $('transit').checked = true;         // a rail example turns schedules on; it never unticks your choice
   plan();
 }
 
