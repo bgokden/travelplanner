@@ -321,19 +321,60 @@ class Timetable:
         return out
 
 
+# Two stops sharing an id but more than this far apart are different physical
+# stops, not the same entity. A numeric GTFS id is not globally unique -- gtfs.de
+# feed editions reassign them, so the same id can be Emmerich in one feed and
+# Salzgitter (~290 km away) in another. Same-id stops within this radius are the
+# one stop (e.g. fv and rv carry a station's shared DELFI id at identical
+# coordinates), so first-wins dedupe is correct there.
+_SAME_STOP_KM = 1.0
+
+
+def _remap_trip(trip: Trip, rename: dict[str, str]) -> Trip:
+    """A copy of `trip` with its stop-time stop ids rewritten by `rename`."""
+    stop_times = tuple(
+        replace(st, stop_id=rename.get(st.stop_id, st.stop_id))
+        for st in trip.stop_times)
+    return replace(trip, stop_times=stop_times)
+
+
 def merge_timetables(*timetables: Timetable) -> Timetable:
     """Combine several timetables into one (e.g. a flight network plus a GTFS
     feed) for a single scan. Stops and trips are first-wins on id collision and
-    footpaths are concatenated, so pass the more specific feed first. Feed ids are
-    globally unique in practice (GTFS ids, IATA-pair flight ids), so a collision
-    means the same entity and dropping the duplicate is correct."""
+    footpaths are concatenated, so pass the more specific feed first.
+
+    A reused stop id is treated as the same stop only when the incoming stop is at
+    the same place (within _SAME_STOP_KM); a far-apart id clash is a distinct stop
+    that gets a fresh id, and that feed's trips and footpaths are rewritten to it.
+    Without this, first-wins would silently re-point the loser feed's footpath or
+    trip onto the winner feed's stop -- a "walk" leg that teleports hundreds of km
+    when two feeds disagree on what a numeric id means."""
+    from travelplanner.geo import haversine
     merged = Timetable()
     for tt in timetables:
+        rename: dict[str, str] = {}
         for sid, stop in tt.stops.items():
-            merged.stops.setdefault(sid, stop)
+            existing = merged.stops.get(sid)
+            if existing is None:
+                merged.stops[sid] = stop
+            elif haversine(existing.lat, existing.lon,
+                           stop.lat, stop.lon) <= _SAME_STOP_KM:
+                continue                   # same physical stop: first-wins, drop dup
+            else:
+                new_id = f"{sid}#{len(merged.stops)}"
+                while new_id in merged.stops:
+                    new_id += "#"
+                rename[sid] = new_id
+                merged.stops[new_id] = replace(stop, id=new_id)
         for tid, trip in tt.trips.items():
-            merged.trips.setdefault(tid, trip)
-        merged.footpaths.extend(tt.footpaths)
+            if rename and any(st.stop_id in rename for st in trip.stop_times):
+                trip = _remap_trip(trip, rename)
+            merged.trips.setdefault(trip.id, trip)
+        for fp in tt.footpaths:
+            if rename and (fp.from_stop in rename or fp.to_stop in rename):
+                fp = replace(fp, from_stop=rename.get(fp.from_stop, fp.from_stop),
+                             to_stop=rename.get(fp.to_stop, fp.to_stop))
+            merged.footpaths.append(fp)
     return merged
 
 
