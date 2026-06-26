@@ -62,6 +62,34 @@ def test_door_to_door_train_beats_driving():
                    for it in results)
 
 
+def test_most_direct_prefers_the_transit_ride_over_a_faster_drive():
+    """MOST_DIRECT surfaces the scheduled-transit ride even when a pure drive is
+    quicker: "most direct" means the most direct vehicle ride, not "skip transit and
+    drive" (a drive has no scheduled leg, so it must not win). FASTEST still takes
+    the quicker drive, so the two objectives genuinely differ here."""
+    from travelplanner.graph.query import Objective
+    tt = Timetable()
+    tt.add_stop(_stop("StA", 47.0, 7.0))
+    tt.add_stop(_stop("StB", 45.5, 8.0))
+    tt.add_stop(_stop("StC", 44.0, 9.0))           # ~360 km from StA
+    # A transit route (a change at StB) that is slower than driving it.
+    tt.add_trip(make_trip("Leg1", Mode.TRAIN, [
+        ("StA", "10:00", "10:00"), ("StB", "12:00", "12:00")]))
+    tt.add_trip(make_trip("Leg2", Mode.TRAIN, [
+        ("StB", "12:30", "12:30"), ("StC", "14:00", "14:00")]))
+    conn = GeometricConnector(tt.stops)
+    origin = place("HomeA", LocationType.HOTEL, 47.01, 7.01)
+    dest = place("HotelC", LocationType.HOTEL, 43.99, 8.99)
+
+    fastest = plan(origin, dest, DEP, tt, conn, objective=Objective.FASTEST)
+    assert fastest and fastest[0].primary_mode is Mode.CAR     # driving is quicker
+
+    direct = plan(origin, dest, DEP, tt, conn, objective=Objective.MOST_DIRECT)
+    assert direct
+    assert direct[0].primary_mode is not Mode.CAR
+    assert any(leg.mode is Mode.TRAIN for leg in direct[0].legs)
+
+
 def test_drive_time_is_monotonic_in_distance():
     """Regression: a step speed function chosen by total distance made a leg just
     past a band boundary (road > 150 km -> 100 km/h) FASTER than a shorter one

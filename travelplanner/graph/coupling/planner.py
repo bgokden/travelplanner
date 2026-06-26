@@ -171,9 +171,12 @@ def _tuple_dominates(a: tuple, b: tuple) -> bool:
 # Objectives whose preference is not captured by (time, cost, transfers) alone, so
 # they keep the full frontier: GREENEST ranks car_km/emissions; AIR_PRIORITY wants
 # a flight, which is non-dominated only via the car_km/emissions axes (there is no
-# "flies" axis). Restricting them to the 3 core axes would prune the very option
-# they prefer (the greener option, or a slower-but-car-free flight).
-_FULL_FRONTIER_OBJECTIVES = frozenset({Objective.GREENEST, Objective.AIR_PRIORITY})
+# "flies" axis); MOST_DIRECT wants the car-free direct ride, which a faster drive
+# would dominate on the 3 core axes (it has no transfers either) -- the car_km axis
+# is what keeps it on the frontier. Restricting these to the 3 core axes would prune
+# the very option they prefer (the greener option, the car-free flight, the train).
+_FULL_FRONTIER_OBJECTIVES = frozenset(
+    {Objective.GREENEST, Objective.AIR_PRIORITY, Objective.MOST_DIRECT})
 
 
 def _objective_axes(itin: Itinerary, objective: Objective) -> tuple:
@@ -229,6 +232,13 @@ def _order_key(objective: Objective):
             return (cost, total, transfers)
         if objective is Objective.FEWEST_TRANSFERS:
             return (transfers, total, cost)
+        if objective is Objective.MOST_DIRECT:
+            # Fewest scheduled vehicle legs, e.g. one through-train over a
+            # change-at-the-border chain. A pure drive has no scheduled leg, so it
+            # sorts last (leading 1) -- "most direct" means the most direct ride, not
+            # "skip transit and drive". Then fewest legs, then fastest, then cheapest.
+            vehicles = sum(1 for leg in it.legs if leg.mode in _VEHICLE_MODES)
+            return (0 if vehicles else 1, vehicles, total, cost)
         if objective is Objective.GREENEST:
             # least modelled emissions first, then least private-car distance, then
             # time. Emissions (not car-km) leads so a short-access flight never reads

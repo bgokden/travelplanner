@@ -17,6 +17,7 @@ class Objective(Enum):
     FEWEST_TRANSFERS = "fewest_transfers"
     AIR_PRIORITY = "air_priority"
     GREENEST = "greenest"          # least private-car distance, then time
+    MOST_DIRECT = "most_direct"    # fewest scheduled vehicle legs, transit preferred
 
 
 @dataclass(frozen=True)

@@ -239,6 +239,7 @@ _CHOICE_OBJECTIVES = (
     (Objective.CHEAPEST, "Cheapest"),
     (Objective.GREENEST, "Greenest"),
     (Objective.FEWEST_TRANSFERS, "Fewest changes"),
+    (Objective.MOST_DIRECT, "Most direct"),
 )
 
 
