@@ -23,6 +23,13 @@ All notable changes to this project are documented here. The format is based on
   `plan_trip_choices` / `plan_labeled` -- one best option per objective, deduped so a
   trip that wins several keeps all its labels, generated from one candidate pool so the
   labelled view costs about one ordinary plan.
+- A `MOST_DIRECT` objective and a "Most direct" demo card, ranking by fewest scheduled
+  vehicle legs with transit preferred over a pure drive -- so a single through-train is
+  surfaced over a faster change. The earliest-arrival scan never generates a
+  slower-but-direct ride (it takes whatever arrives soonest), so candidate generation
+  gains a one-seat (single-vehicle) pass that finds the direct service for the objective
+  to rank: Amsterdam -> Berlin now offers the direct IC, not only the change-at-Düsseldorf
+  route, on a date the feed carries the through-service.
 - Demo usability: a row of selectable example trips (e.g. Amsterdam to Berlin by
   train, London to New York, Madrid to Santorini) that fill the origin/destination,
   preference, and rail toggle in one click (`/api/examples`); flight legs drawn as
@@ -322,6 +329,17 @@ All notable changes to this project are documented here. The format is based on
   than failing, so a network blip never breaks an otherwise-usable cache.
 
 ### Fixed
+- Timetable merge is now location-aware, fixing cross-feed stop-id collisions that
+  produced teleport "walk" legs. A numeric GTFS id is not globally unique -- gtfs.de feed
+  editions reassign them, so the same id `470416` was Emmerich in one feed and Salzgitter
+  (~290 km away) in another -- and the first-wins merge concatenated the loser feed's
+  parent-child footpath unchanged, re-pointing it onto the winner's stop: a 0-minute
+  293 km "walk" that let a bogus route win Amsterdam -> Berlin. A reused id now counts as
+  the same stop only within 1 km; a far-apart clash gets a fresh id and that feed's trips
+  and footpaths are rewritten to it, so a footpath never teleports across feeds.
+- The demo's example chips no longer untick the "trains & buses" toggle. An example now
+  only turns a data layer on when it needs the schedules, never off, so a layer you
+  enabled stays on across example clicks.
 - The implausible-transit guard now also catches a short trip stitched into an
   hours-long ride (a ~35 km hop returned as a 15 h walk+train), which slipped through
   because the per-leg speed and detour checks only applied past 75 km. An absolute

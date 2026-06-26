@@ -188,8 +188,8 @@ it = plan_trip(origin, dest, depart, tt, **preference_kwargs("train"))[0]
 
 For the door-to-door demo we usually want to *show* a few options at once, each
 labelled by what it is best at. `plan_trip_choices` returns one best itinerary per
-objective (Fastest / Cheapest / Greenest / Fewest changes), deduped so a trip that
-wins several objectives keeps all its labels:
+objective (Fastest / Cheapest / Greenest / Fewest changes / Most direct), deduped so a
+trip that wins several objectives keeps all its labels:
 
 ```python
 from travelplanner import Objective
@@ -203,6 +203,13 @@ for itinerary, labels in choices:
 
 The candidate pool is generated once and ranked per objective, so the labelled view
 costs about one ordinary plan no matter how many labels you ask for.
+
+`MOST_DIRECT` is worth a note: it ranks by the fewest scheduled vehicle legs — a single
+through-train over a change-at-the-border chain — and prefers a transit ride to a pure
+drive. A slower-but-direct service is never the earliest arrival, so the ordinary scan
+does not generate it; a one-seat (single-vehicle) pass finds it and adds it to the pool
+for this objective to rank. That is what lets a direct train appear when a faster
+multi-leg route also exists — provided the feed carries the through-service on the date.
 
 ## Driving times respond to the departure
 
