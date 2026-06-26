@@ -248,7 +248,8 @@ class ConnectionScan:
 
     def _min_transfer_rounds(self, sources: dict[str, datetime],
                              conditions: frozenset[str],
-                             allowed_modes: frozenset | None = None) -> list:
+                             allowed_modes: frozenset | None = None,
+                             targets: frozenset | None = None) -> list:
         """RAPTOR-style rounds (memoized). rounds[k] is (arr_foot, arr_veh, pred_foot,
         pred_veh, board_basis) for journeys using AT MOST k vehicle trips: round k may
         board a run only from a stop reached in round k-1, which bounds the trip count,
@@ -261,13 +262,18 @@ class ConnectionScan:
         key = (tuple(sorted(sources.items())), conditions, allowed_modes)
         cached = self._mt_cache.get(key)
         if cached is None:
+            # `targets` (the egress stops) only bounds how far the scan runs, not the
+            # rounds it returns, so it stays out of the cache key: the first caller
+            # (min_transfer_arrivals) seeds it, and the per-target queries reuse the
+            # cached rounds.
             cached = self._compute_min_transfer_rounds(
                 {s: self.tt.localize(s, t) for s, t in sources.items()},
-                conditions, allowed_modes)
+                conditions, allowed_modes, targets)
             self._mt_cache[key] = cached
         return cached
 
-    def _compute_min_transfer_rounds(self, sources, conditions, allowed_modes):
+    def _compute_min_transfer_rounds(self, sources, conditions, allowed_modes,
+                                     targets=None):
         t0 = min(sources.values())
         t_end = max(sources.values()) + self.horizon
         cache_key = (t0, t_end, conditions)
@@ -331,15 +337,23 @@ class ConnectionScan:
             if not improved:
                 break                      # a further trip reaches nothing new: done
             rounds.append((af, av, pf, pv, board_basis))
+            # Stop once every egress stop is reached: its first-reaching round is its
+            # fewest-transfers journey, so later rounds (more changes) are never the
+            # ranked choice. The planner only needs the egress, not the whole network,
+            # so this avoids exploring all of Germany on a Berlin trip.
+            if targets and all((t in af or t in av) for t in targets):
+                break
         return rounds
 
     def min_transfer_arrivals(self, sources: dict[str, datetime],
                               conditions: frozenset[str] = frozenset(),
-                              allowed_modes: frozenset | None = None) -> dict:
+                              allowed_modes: frozenset | None = None,
+                              targets: frozenset | None = None) -> dict:
         """Per stop, (trips, arrival) at its fewest-transfers round -- to rank egress
         stops by changes first, then arrival. A stop reachable on foot alone (round 0)
-        is omitted: it carries no vehicle journey for the coupling to use."""
-        rounds = self._min_transfer_rounds(sources, conditions, allowed_modes)
+        is omitted: it carries no vehicle journey for the coupling to use. `targets`
+        (the egress stops) bounds the scan: it stops once they are all reached."""
+        rounds = self._min_transfer_rounds(sources, conditions, allowed_modes, targets)
         first: dict[str, tuple] = {}
         for k in range(len(rounds)):
             af, av = rounds[k][0], rounds[k][1]

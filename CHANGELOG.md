@@ -32,7 +32,9 @@ All notable changes to this project are documented here. The format is based on
   its fewest-changes journey, reconstructed and added to the pool for the objective to
   rank. Amsterdam -> Berlin now offers the direct IC (plus a short S-Bahn to the door),
   not only the four-train change-at-Düsseldorf route, on a date the feed carries the
-  through-service.
+  through-service. The scan is bounded to keep per-request cost down: surface transit
+  only (a direct flight is already the earliest-arrival air candidate) and it stops once
+  the egress stops are reached rather than exploring the whole network.
 - Demo usability: a row of selectable example trips (e.g. Amsterdam to Berlin by
   train, London to New York, Madrid to Santorini) that fill the origin/destination,
   preference, and rail toggle in one click (`/api/examples`); flight legs drawn as

@@ -83,12 +83,12 @@ _MODE_SETS = (
     frozenset({Mode.TRAIN, Mode.FERRY}),    # surface transit
 )
 
-# Mode restrictions for the fewest-changes pass that surfaces a direct or low-change
-# through-service for MOST_DIRECT. Air-only is omitted: the earliest-arrival air
-# candidate is already the most direct flight when one exists, so an air pass would
-# only duplicate it. All-modes covers a direct flight; surface-transit a direct train.
+# Mode restriction for the fewest-changes pass that surfaces a direct or low-change
+# through-service for MOST_DIRECT. Only surface transit: a direct flight is already
+# the earliest-arrival air candidate (MOST_DIRECT ranks it on leg count anyway), and an
+# all-modes fewest-transfers scan is the costliest one to add per request -- so it is
+# omitted, halving the pass.
 _DIRECT_MODE_SETS = (
-    None,
     frozenset({Mode.TRAIN, Mode.FERRY}),
 )
 
@@ -410,7 +410,8 @@ def _min_transfer_candidate(csa: ConnectionScan, origin: Location, dest: Locatio
     first, then door arrival. Surfaces a direct or low-change ride (e.g. a through-IC
     plus a short feeder) that the earliest-arrival scan skips for a faster, more-hop
     route -- the candidate MOST_DIRECT ranks first."""
-    arrivals = csa.min_transfer_arrivals(sources, conditions, allowed_modes)
+    arrivals = csa.min_transfer_arrivals(sources, conditions, allowed_modes,
+                                         targets=frozenset(egress))
     ranked = sorted(
         ((arrivals[sid][0], arrivals[sid][1] + timedelta(seconds=leg.seconds),
           sid, leg) for sid, leg in egress.items() if sid in arrivals),
