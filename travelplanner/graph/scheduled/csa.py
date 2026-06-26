@@ -238,6 +238,117 @@ class ConnectionScan:
             return None  # target is itself a source: no actual journey
         return self._reconstruct(target, label, af, av, pf, pv, bb)
 
+    def _one_seat_scan(self, sources: dict[str, datetime],
+                       conditions: frozenset[str],
+                       allowed_modes: frozenset | None = None):
+        # Best single-vehicle ("one-seat") arrival at every stop: walk from a source
+        # to a boarding stop (0 trips), ride exactly one run, then optionally walk to
+        # the stop. The earliest-arrival scan rides whatever gets there soonest, which
+        # on a corridor with a fast change beats a slower through-service -- so a
+        # direct train is never produced. This one finds it, for MOST_DIRECT to rank.
+        if not sources:
+            return {}, {}, {}, {}
+        sources = {s: self.tt.localize(s, t) for s, t in sources.items()}
+        t0 = min(sources.values())
+        t_end = max(sources.values()) + self.horizon
+        cache_key = (t0, t_end, conditions)
+        conns = self._conn_cache.get(cache_key)
+        if conns is None:
+            conns = self.tt.connections(t0, t_end, conditions)
+            self._conn_cache[cache_key] = conns
+
+        # 0-trip readiness: when you can be at a stop having only walked from a
+        # source. A source's own footpaths are transitively closed, so one pass.
+        foot_ready: dict[str, datetime] = {}
+        pred_ready: dict[str, tuple] = {}     # ("source",) | ("foot", fp)
+        for s, t in sources.items():
+            if foot_ready.get(s) is None or t < foot_ready[s]:
+                foot_ready[s] = t
+                pred_ready[s] = ("source",)
+        for s in [s for s, p in pred_ready.items() if p == ("source",)]:
+            for fp in self._fp_from.get(s, ()):
+                cand = foot_ready[s] + fp.duration
+                if foot_ready.get(fp.to_stop) is None or cand < foot_ready[fp.to_stop]:
+                    foot_ready[fp.to_stop] = cand
+                    pred_ready[fp.to_stop] = ("foot", fp)
+
+        boarded: dict[str, Connection] = {}   # run_id -> boarding connection
+        arr: dict[str, datetime] = {}         # best one-seat arrival (pre final walk)
+        pred_ride: dict[str, tuple] = {}      # stop -> (board_c, alight_c)
+        for c in conns:
+            if allowed_modes is not None and c.mode not in allowed_modes:
+                continue
+            u, v, r = c.dep_stop, c.arr_stop, c.run_id
+            if r not in boarded:
+                ru = foot_ready.get(u)
+                if ru is not None and ru <= c.departure:
+                    boarded[r] = c        # earliest foot-reachable boarding on the run
+            if r in boarded and (arr.get(v) is None or c.arrival < arr[v]):
+                arr[v] = c.arrival
+                pred_ride[v] = (boarded[r], c)
+
+        # Final on-foot leg from a ride's alighting stop (no extra vehicle).
+        final_arr = dict(arr)
+        pred_final: dict[str, tuple] = {v: ("ride",) for v in arr}
+        for a in list(arr):
+            for fp in self._fp_from.get(a, ()):
+                cand = arr[a] + fp.duration
+                if final_arr.get(fp.to_stop) is None or cand < final_arr[fp.to_stop]:
+                    final_arr[fp.to_stop] = cand
+                    pred_final[fp.to_stop] = ("foot", fp)
+        return final_arr, foot_ready, pred_ride, (pred_final, pred_ready)
+
+    def one_seat_arrivals(self, sources: dict[str, datetime],
+                          conditions: frozenset[str] = frozenset(),
+                          allowed_modes: frozenset | None = None
+                          ) -> dict[str, datetime]:
+        """Best single-vehicle arrival at every reachable stop (for egress ranking,
+        mirroring arrival_times)."""
+        final_arr, _, _, _ = self._one_seat_scan(sources, conditions, allowed_modes)
+        return final_arr
+
+    def one_seat_query(self, sources: dict[str, datetime], target: str,
+                       conditions: frozenset[str] = frozenset(),
+                       allowed_modes: frozenset | None = None) -> Journey | None:
+        """The best single-vehicle ("one-seat") journey from any source to target,
+        or None: walk to a boarding stop, ride one run, optionally walk to target.
+        Same signature as query(), so the coupling can swap one for the other."""
+        if not sources:
+            return None
+        final_arr, foot_ready, pred_ride, (pred_final, pred_ready) = \
+            self._one_seat_scan(sources, conditions, allowed_modes)
+        if target not in final_arr:
+            return None
+        legs: list[JourneyLeg] = []
+        stop = target
+        pf = pred_final.get(stop)
+        if pf is not None and pf[0] == "foot":
+            fp = pf[1]
+            end = final_arr[stop]
+            legs.append(JourneyLeg(
+                mode=Mode.WALK, from_stop=fp.from_stop, to_stop=fp.to_stop,
+                departure=end - fp.duration, arrival=end,
+                cost_level=CostLevel.LOW, trip_id=None))
+            stop = fp.from_stop                       # the ride's alighting stop
+        ride = pred_ride.get(stop)
+        if ride is None:
+            return None
+        board_c, last_c = ride
+        legs.append(JourneyLeg(
+            mode=board_c.mode, from_stop=board_c.dep_stop, to_stop=last_c.arr_stop,
+            departure=board_c.departure, arrival=last_c.arrival,
+            cost_level=board_c.cost_level, trip_id=board_c.trip_id))
+        pr = pred_ready.get(board_c.dep_stop)
+        if pr is not None and pr[0] == "foot":
+            fp = pr[1]
+            end = foot_ready[board_c.dep_stop]
+            legs.append(JourneyLeg(
+                mode=Mode.WALK, from_stop=fp.from_stop, to_stop=fp.to_stop,
+                departure=end - fp.duration, arrival=end,
+                cost_level=CostLevel.LOW, trip_id=None))
+        legs.reverse()
+        return Journey(legs=tuple(legs))
+
     def _reconstruct(self, target: str, label: str, arr_foot: dict, arr_veh: dict,
                      pred_foot: dict, pred_veh: dict, board_basis: dict) -> Journey:
         # Each "trip" predecessor already spans a whole boarded run (boarding

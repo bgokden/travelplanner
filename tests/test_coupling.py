@@ -62,32 +62,37 @@ def test_door_to_door_train_beats_driving():
                    for it in results)
 
 
-def test_most_direct_prefers_the_transit_ride_over_a_faster_drive():
-    """MOST_DIRECT surfaces the scheduled-transit ride even when a pure drive is
-    quicker: "most direct" means the most direct vehicle ride, not "skip transit and
-    drive" (a drive has no scheduled leg, so it must not win). FASTEST still takes
-    the quicker drive, so the two objectives genuinely differ here."""
+def test_most_direct_surfaces_a_through_train_over_a_faster_change():
+    """A slower direct through-train is never the earliest arrival, so the scan does
+    not generate it -- the one-seat pass does. MOST_DIRECT then ranks it first
+    (one scheduled leg), while FASTEST still takes the quicker two-train change, so
+    the objectives genuinely differ and the direct ride is a real, distinct option."""
     from travelplanner.graph.query import Objective
     tt = Timetable()
     tt.add_stop(_stop("StA", 47.0, 7.0))
     tt.add_stop(_stop("StB", 45.5, 8.0))
     tt.add_stop(_stop("StC", 44.0, 9.0))           # ~360 km from StA
-    # A transit route (a change at StB) that is slower than driving it.
+    # A slow direct through-train (one scheduled leg)...
+    tt.add_trip(make_trip("Direct", Mode.TRAIN, [
+        ("StA", "09:00", "09:00"), ("StC", "12:00", "12:00")]))
+    # ...and a faster two-leg route with a change at StB (two scheduled legs).
     tt.add_trip(make_trip("Leg1", Mode.TRAIN, [
-        ("StA", "10:00", "10:00"), ("StB", "12:00", "12:00")]))
+        ("StA", "09:00", "09:00"), ("StB", "10:15", "10:15")]))
     tt.add_trip(make_trip("Leg2", Mode.TRAIN, [
-        ("StB", "12:30", "12:30"), ("StC", "14:00", "14:00")]))
+        ("StB", "10:30", "10:30"), ("StC", "11:30", "11:30")]))
     conn = GeometricConnector(tt.stops)
     origin = place("HomeA", LocationType.HOTEL, 47.01, 7.01)
     dest = place("HotelC", LocationType.HOTEL, 43.99, 8.99)
 
-    fastest = plan(origin, dest, DEP, tt, conn, objective=Objective.FASTEST)
-    assert fastest and fastest[0].primary_mode is Mode.CAR     # driving is quicker
-
     direct = plan(origin, dest, DEP, tt, conn, objective=Objective.MOST_DIRECT)
     assert direct
-    assert direct[0].primary_mode is not Mode.CAR
-    assert any(leg.mode is Mode.TRAIN for leg in direct[0].legs)
+    top = direct[0]
+    assert sum(1 for leg in top.legs if leg.mode is Mode.TRAIN) == 1   # the through-train
+
+    fastest = plan(origin, dest, DEP, tt, conn, objective=Objective.FASTEST)
+    assert fastest
+    assert sum(1 for leg in fastest[0].legs if leg.mode is Mode.TRAIN) == 2  # the change
+    assert fastest[0].arrive_at < top.arrive_at      # and it really is quicker
 
 
 def test_drive_time_is_monotonic_in_distance():

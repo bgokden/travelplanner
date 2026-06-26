@@ -83,6 +83,15 @@ _MODE_SETS = (
     frozenset({Mode.TRAIN, Mode.FERRY}),    # surface transit
 )
 
+# Mode restrictions for the one-seat (single-vehicle) pass that surfaces a direct
+# through-service for MOST_DIRECT. Air-only is omitted: the earliest-arrival air
+# candidate is already a direct flight when one exists, so a one-seat air pass would
+# only duplicate it. All-modes covers a direct flight; surface-transit a direct train.
+_DIRECT_MODE_SETS = (
+    None,
+    frozenset({Mode.TRAIN, Mode.FERRY}),
+)
+
 
 def _stop_location(stop: Stop) -> Location:
     return Location(name=stop.name or stop.id,
@@ -335,14 +344,20 @@ def _transit_candidate(csa: ConnectionScan, origin: Location, dest: Location,
                        sources: dict[str, datetime],
                        egress: dict[str, AccessLeg], timetable: Timetable,
                        conditions: frozenset[str],
-                       allowed_modes: frozenset | None) -> Itinerary | None:
-    arrivals = csa.arrival_times(sources, conditions, allowed_modes)
+                       allowed_modes: frozenset | None,
+                       arrivals_fn=None, query_fn=None) -> Itinerary | None:
+    # arrivals_fn/query_fn default to the earliest-arrival scan; pass the one-seat
+    # pair to surface a single-vehicle through-service instead (same egress ranking,
+    # different journey), so a direct train competes on the frontier for MOST_DIRECT.
+    arrivals_fn = arrivals_fn or csa.arrival_times
+    query_fn = query_fn or csa.query
+    arrivals = arrivals_fn(sources, conditions, allowed_modes)
     ranked = sorted(
         ((arrivals[sid] + timedelta(seconds=leg.seconds), sid, leg)
          for sid, leg in egress.items() if sid in arrivals),
         key=lambda x: x[0])
     for _, e_stop, e_leg in ranked:
-        journey = csa.query(sources, e_stop, conditions, allowed_modes)
+        journey = query_fn(sources, e_stop, conditions, allowed_modes)
         if journey is None:
             continue
         # Skip a journey that rides through a stop with no Stop entry (a dangling
@@ -431,6 +446,17 @@ def _candidates(origin: Location, dest: Location, depart_at: datetime,
             itin = _transit_candidate(csa, origin, dest, depart_at, access,
                                       sources, egress, timetable, conditions,
                                       allowed)
+            if itin is not None:
+                candidates.append(itin)
+        # Also offer the most-direct one-seat ride per mode set. The earliest-arrival
+        # scan above takes a faster change over a slower through-service, so a direct
+        # train is never produced; this adds it to the pool for MOST_DIRECT to rank
+        # (a duplicate of an above candidate is dropped by the Pareto dedupe).
+        for allowed in _DIRECT_MODE_SETS:
+            itin = _transit_candidate(csa, origin, dest, depart_at, access,
+                                      sources, egress, timetable, conditions,
+                                      allowed, arrivals_fn=csa.one_seat_arrivals,
+                                      query_fn=csa.one_seat_query)
             if itin is not None:
                 candidates.append(itin)
     return candidates
